@@ -22,3 +22,8 @@ so I make no claims as to the quality or optimization. The goals for me here are
     to be proud of and even use. So much I see today is demos and prototypes that 
     are great for funding rounds because AI builds for appearances. I'd like to
     see how much I can do with AI while maintaining focus on functionality.
+4. Open source exposure
+    - I've always liked the idea of open source development and hope to contribute
+    to projects like LLVM one day. Consider this project my introduction to LLVM
+    and preparation to dig deeper into the guts of LLVM's representations and 
+    optimizations.
