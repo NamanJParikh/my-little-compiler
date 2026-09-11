@@ -50,3 +50,6 @@ def isPositive(x)
 ### Comments
 Commented lines will be begin with ```#```. Multi-line comments will open and 
 close with ```#*``` and ```*#```.
+
+### Semicolons
+Semicolons must be placed at the end of expressions.
