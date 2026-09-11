@@ -15,6 +15,7 @@
     For get token, the possible tokens we can read are
      - Numbers (numeric string with <= 1 '.')
      - Variable names (alphanumeric strings starting with a letter)
+     - Function names (same as variable names, but followed by '(')
      - Keywords (e.g. 'def')
      - Comments (starting with '#' and possibly multi-line with '#*' and '*#')
      - Special characters (e.g. '+', '=', '(', etc.), may require further parsing
@@ -29,8 +30,8 @@ static double NumVal;               // filled in with number value
 enum Token {
     // Number
     tok_number = -1,
-    // Variable name
-    tok_varname = -2,
+    // Variable/function name
+    tok_name = -2,
     // Keywords
     tok_def = -3,
     // EOF
@@ -64,18 +65,18 @@ static int gettok() {
         return tok_number;
     }
 
-    // Variable names or keywords - starting with a letter
+    // Variable/function names or keywords - starting with a letter
     if (isalpha(LastChar)) {
         IdentifierStr = LastChar;
-        // read rest of alphanumeric string
-        while (isalnum((LastChar = getchar()))) {
+        // read rest of alphanumeric string or underscore for variable/function name
+        while (isalnum((LastChar = getchar())) || LastChar == '_') {
             IdentifierStr += LastChar;
         }
-        // identify if it's a keyword. if not, it's a variable name
+        // identify if it's a keyword. if not, it's a variable/function name
         if (IdentifierStr == "def") {
             return tok_def;
         } else {
-            return tok_varname;
+            return tok_name;
         }
     }
     
