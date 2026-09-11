@@ -8,7 +8,7 @@ so I make no claims as to the quality or optimization. The goals for me here are
 1. Get my C++ groove back. 
     - I haven't touched C++ in a long time. Never needed it in college outside a 
     small Arduino project. 
-2. Bridge the gap from theory to implementation.
+2. Bridge the gap from theory to implementation
     - I love learning theory and I love building things, but often I find when you
     start implementing, the theory gets swept under the rug. Theory runs deep with
     compilers, so I'm hoping this project will give me a chance at some more
@@ -27,3 +27,12 @@ so I make no claims as to the quality or optimization. The goals for me here are
     to projects like LLVM one day. Consider this project my introduction to LLVM
     and preparation to dig deeper into the guts of LLVM's representations and 
     optimizations.
+5. Lower and lower we go
+    - Currently, I hope to go lower level in my career. It seems more technically
+    interesting to me and remains all the more relevant with increasing optimization
+    and efficiency needed for AI calculations. 
+
+## Step 1: The LLVM Tutorial
+
+The LLVM tutorial creates a compiler for the toy language Kaleidoscope, and my
+following of it can be found in ```./kaleidoscope```.
