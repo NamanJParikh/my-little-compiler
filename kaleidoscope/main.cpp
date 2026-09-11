@@ -116,3 +116,27 @@ static int gettok() {
     return ThisChar;
 
 }
+
+/* 
+    #############################
+    ###          AST          ###
+    #############################
+
+    The most basic form of Kaleidescope contains two types of statements: 
+    expressions and function definitions.
+
+    Expressions are built from either numerical values or variable names. Binary 
+    operators and functions are applied to build more complex expressions. This
+    justifies the following classes:
+     - ExprAST: base class for expressions
+      - NumberExprAST: numeric values (e.g. "123.4")
+      - VariableExprAST: variable names (e.g. "myVar")
+      - BinaryExprAST: binary operators (e.g. "myVar + 123.4")
+      - CallExprAST: function calls (e.g. "myFunc(myVar, 123.4)")
+    
+    Functions are defined as a prototype (def funcName(arg1, arg2, ...)) and a 
+    body, which is an expression. This justifies the following classes:
+     - PrototypeAST: function prototype
+     - FunctionAST: function definition (prototype + body expression)
+      
+*/
