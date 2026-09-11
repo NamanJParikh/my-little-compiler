@@ -43,6 +43,7 @@ enum Token {
     Reads the next token from standard input and returns its type, filling in
       IdentifierStr or NumVal if appropriate.
 */
+
 static int gettok() {
     static int LastChar = ' ';
 
@@ -141,6 +142,8 @@ static int gettok() {
       
 */
 
+namespace {
+
 class ExprAST  {
     public:
         virtual ~ExprAST() = default;
@@ -200,3 +203,301 @@ class FunctionAST {
                 std::unique_ptr<ExprAST> Body)
         : Proto(std::move(Proto)), Body(std::move(Body)) {}
 };
+
+}
+
+/*
+    ##############################
+    ###         Parser         ###
+    ##############################
+
+    Below is a top-down logical flow of the parsing.
+
+    If tok_def, parse following function definition
+     -> parse prototype
+         -> parse function name
+         -> '('
+         -> parse args list separated by ',' to vector
+         -> ')'
+     -> parse expression
+    
+    Otherwise, parse following expression
+     -> parse simple expression (store as LHS)
+         -> could be number, variable name, function call, or expr in parens
+             -> number: stored by lexer in NumVal
+             -> variable name: stored by lexer in IdentifierStr
+             -> function call: callee stored by lexer in IdentifierStr, parse args
+             -> parse expression in parens
+     -> loop: is next token a binary operator?
+         -> yes: parse following expression as RHS
+             -> if next token is another binary operator
+                binary operators have "precedence" defining correct order of ops
+                 -> if next op is higher precedence (e.g. x+y*z), 
+                    recurse with RHS as new LHS to get full RHS
+                 -> combine RHS with LHS
+         -> no: return LHS
+
+    For the sake of giving LLVM a unified top-level view, we place expressions
+    into anonymous functions, i.e. a function with no name or args. This way,
+    everything is parsed into a FunctionAST at the highest level.
+
+    Error handling - return nullptr if a parse fails. 
+*/
+
+static int CurTok;              // current token to be parsed
+static int getNextToken() {     // update CurTok to the next token using lexer
+    CurTok = gettok();
+}
+
+/* 
+    ##### Error Handling Helpers ##### 
+*/
+
+std::unique_ptr<ExprAST> LogError(const char *Str) {
+  fprintf(stderr, "Error: %s\n", Str);
+  return nullptr;
+}
+
+std::unique_ptr<PrototypeAST> LogErrorP(const char *Str) {
+  fprintf(stderr, "Error: %s\n", Str);
+  return nullptr;
+}
+
+/* 
+    ##### Parsing Simple Expressions ##### 
+*/
+
+// will be specified fully later, defined now to allow recursive use 
+static std::unique_ptr<ExprAST> ParseExpression();
+
+static std::unique_ptr<ExprAST> ParseNumberExpr() {
+    auto Result = std::make_unique<NumberExprAST>(NumVal);
+    getNextToken();
+    return std::move(Result);
+}
+
+static std::unique_ptr<ExprAST>  ParseNameExpr() {
+    std::string IdName = IdentifierStr;                 // get var or func name
+    getNextToken();                                     // consume name
+
+    // is it a function call or just a var?
+    if (CurTok != '(') {
+        return std::make_unique<VariableExprAST>(IdName);   // just a var name
+    }
+
+    getNextToken();                                         // consume '('
+    std::vector<std::unique_ptr<ExprAST>> Args;             // args list
+
+    // No args - func()
+    if (CurTok == ')') {
+        getNextToken();                                     // consume '('
+        return std::make_unique<CallExprAST>(IdName, std::move(Args));
+    }
+
+    // Parse args
+    while (true) {
+        if (auto Arg = ParseExpression()) {Args.push_back(std::move(Arg));}
+        else {return nullptr;}      // propagate nullptr if ParseExpression fail
+        if (CurTok == ',') {
+            getNextToken();
+        } else if (CurTok == ')') {
+            break;
+        } else {
+            return LogError("Argument list incorrectly formatted");
+        }
+    }
+    getNextToken();             // consume ')'
+    return std::make_unique<CallExprAST>(IdName, std::move(Args));
+}
+
+static std::unique_ptr<ExprAST> ParseParenExpr() {
+    getNextToken();                 // consume '('
+    auto E = ParseExpression();     // should consume all tokens in the expression
+    if (!E) {return nullptr;}       // propagate nullptr if ParseExpression fail
+    if (CurTok != ')') {
+        return LogError("Unclosed parentheses");
+    }
+    getNextToken();
+    return E;                       // return the expression parsed
+}
+
+static std::unique_ptr<ExprAST> ParseSimple() {
+    switch (CurTok) {
+        case tok_number: return ParseNumberExpr();
+        case tok_name: return ParseNameExpr();
+        case '(': return ParseParenExpr();
+        default: return LogError("unknown token when expecting an expression");
+    }
+}
+
+/* 
+    ##### Parsing Full Expressions ##### 
+*/
+
+// specified later in parsing loop
+static std::map<char, int> BinopPrecedence;
+
+// returns precedence of -1 if CurTok is not a valid bin op
+static int GetTokPrecedence() {
+    if (BinopPrecedence.contains(CurTok)) {
+        return BinopPrecedence[CurTok];
+    } else {
+        return -1;
+    }
+}
+
+// Parse binary operations in order of precedence
+static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
+                                              std::unique_ptr<ExprAST> LHS) {
+    while (true) {
+        int CurrPrec = GetTokPrecedence();
+        // occurs if CurTok not a bin op or LHS was previously an RHS and needs  
+        // to be combined with an old LHS before continuing
+        if (CurrPrec < ExprPrec) {
+            return LHS;
+        }
+
+        int BinOp = CurTok;
+        getNextToken();                     // consume bin op
+
+        auto RHS = ParseSimple();           // consumes RHS
+        if (!RHS) {return nullptr;}         // propagate pointer if parse fails
+
+        int NextPrec = GetTokPrecedence();
+        if (NextPrec > CurrPrec) {
+            // +1 to ensure RHS only combines if precedence is strictly higher
+            // than CurrPrec
+            RHS = ParseBinOpRHS(CurrPrec+1, std::move(RHS));
+            if (!RHS) {return nullptr;}     // propagate pointer if parse fails
+        }
+
+        LHS = std::make_unique<BinaryExprAST>(BinOp, std::move(LHS), std::move(RHS));
+    }
+}
+
+static std::unique_ptr<ExprAST> ParseFull() {
+    auto LHS = ParseSimple();
+    if (!LHS) {return nullptr;}             // propagate nullptr if fail
+    return ParseBinOpRHS(0, std::move(LHS));
+}
+
+/* 
+    ##### Parsing Top Level Expression ##### 
+*/
+
+static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
+    auto E = ParseFull();
+    if (!E) {return nullptr;}               // propagate nullptr if fail
+    
+    // anonymous function prototype with no name or args
+    auto Proto = std::make_unique<PrototypeAST>("__anon_expr", std::vector<std::string>());
+    return std::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+}
+
+/* 
+    ##### Parsing Functions ##### 
+*/
+
+static std::unique_ptr<PrototypeAST> ParseProto() {
+    if (CurTok != tok_name) {
+        return LogErrorP("Function name not found in prototype");
+    }
+    std::string FnName = IdentifierStr;     // parse function name
+    getNextToken();                         // consume FnName
+
+    if (CurTok != '(') {
+        return LogErrorP("Function name not followed by parens");
+    }
+    std::vector<std::string> ArgNames;      // parse function args
+    while (getNextToken() == tok_name) {
+        ArgNames.push_back(IdentifierStr);
+    }
+
+    if (CurTok != ')') {
+        return LogErrorP("Unclosed parens in function prototype");
+    }
+    getNextToken();                         // consume ')'
+
+    return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
+}
+
+static std::unique_ptr<FunctionAST> ParseFunction() {
+    getNextToken();                         // consume 'def'
+    auto Proto = ParseProto();
+    if (!Proto) {return nullptr;}           // propagate nullptr if fail
+
+    auto E = ParseFull();
+    if (!E) {return nullptr;}               // propagate nullptr if fail
+
+    return std::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+}
+
+/* 
+    ##### Top Level Parsing ##### 
+*/
+
+static void HandleDefinition() {
+  if (ParseFunction()) {
+    fprintf(stderr, "Parsed a function definition.\n");
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
+static void HandleTopLevelExpression() {
+  // Evaluate a top-level expression into an anonymous function.
+  if (ParseTopLevelExpr()) {
+    fprintf(stderr, "Parsed a top-level expr\n");
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
+static void MainLoop() {
+    while (true) {
+        fprintf(stderr, "ready> ");
+        switch (CurTok) {
+            case tok_eof:
+                return;
+            case ';':               // ignore top-level semicolons.
+                getNextToken();
+                break;
+            case tok_def:
+                HandleDefinition();
+                break;
+            default:
+                HandleTopLevelExpression();
+                break;
+        }
+    }
+}
+
+/*
+    ##############################
+    ###         Driver         ###
+    ##############################
+*/
+
+int main() {
+    // Install standard binary operators.
+    BinopPrecedence['<'] = 10;
+    BinopPrecedence['>'] = 10;
+    BinopPrecedence['='] = 10;
+    BinopPrecedence['+'] = 20;
+    BinopPrecedence['-'] = 20;
+    BinopPrecedence['*'] = 30;
+    BinopPrecedence['/'] = 30;
+    BinopPrecedence['//'] = 30;
+    BinopPrecedence['%'] = 30;
+
+    // Prime the first tokens
+    fprintf(stderr, "ready> ");
+    getNextToken();
+
+    // Run main interpreter loop
+    MainLoop();
+
+    return 0;
+}
