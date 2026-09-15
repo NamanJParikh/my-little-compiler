@@ -69,10 +69,9 @@ static int gettok() {
     }
     
     // Numbers
-    //* this is only positive values, need negative sign
-    if (isdigit(LastChar) || LastChar == '.') {
+    if (isdigit(LastChar) || LastChar == '.' || LastChar == '~') {
         NumStr = "";
-        while (isalnum(LastChar) || LastChar == '.') {
+        while (isalnum(LastChar) || LastChar == '.' || LastChar == '~') {
             NumStr += LastChar;
             LastChar = getchar();
         }
@@ -439,16 +438,32 @@ std::unique_ptr<PrototypeAST> LogErrorP(const char *Str) {
 static std::unique_ptr<ExprAST> ParseFull();
 
 static std::unique_ptr<ExprAST> ParseNumberExpr() {
+    // determine if positive or negative number
+    // don't need to check if string is empty because this won't run unless at
+    // least one character was added to NumStr by lexer
+    bool isNegative;
+    if (NumStr[0] == '~') {
+        isNegative = true;
+        NumStr.erase(0, 1);
+    } else {
+        isNegative = false;
+    }
+
     // assert at most 1 decimal point in number
     if (ptrdiff_t count = std::count(NumStr.begin(), NumStr.end(), '.'); count > 1) {
         return LogError("Multiple decimal points in number");
     }
+    // ensure only numbers and . in number (e.g. 12x is not an allowed token)
     for (char n : NumStr) {
         if (!isdigit(n) && n != '.') {
             return LogError("Non-numerical character in number");
         }
     }
+
     double NumVal = strtod(NumStr.c_str(), 0);
+    if (isNegative) {
+        NumVal = -1 * NumVal;
+    }
     auto Result = std::make_unique<NumberExprAST>(NumVal);
     getNextToken();
     return std::move(Result);
