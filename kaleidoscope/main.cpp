@@ -1,3 +1,6 @@
+// Compile statement:
+// clang++ -g -O3 main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core` -o compile
+
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/BasicBlock.h"
@@ -267,6 +270,7 @@ class FunctionAST {
 static int CurTok;              // current token to be parsed
 static int getNextToken() {     // update CurTok to the next token using lexer
     CurTok = gettok();
+    return CurTok;
 }
 
 /* 
@@ -288,7 +292,7 @@ std::unique_ptr<PrototypeAST> LogErrorP(const char *Str) {
 */
 
 // will be specified fully later, defined now to allow recursive use 
-static std::unique_ptr<ExprAST> ParseExpression();
+static std::unique_ptr<ExprAST> ParseFull();
 
 static std::unique_ptr<ExprAST> ParseNumberExpr() {
     auto Result = std::make_unique<NumberExprAST>(NumVal);
@@ -316,8 +320,8 @@ static std::unique_ptr<ExprAST>  ParseNameExpr() {
 
     // Parse args
     while (true) {
-        if (auto Arg = ParseExpression()) {Args.push_back(std::move(Arg));}
-        else {return nullptr;}      // propagate nullptr if ParseExpression fail
+        if (auto Arg = ParseFull()) {Args.push_back(std::move(Arg));}
+        else {return nullptr;}      // propagate nullptr if ParseFull fail
         if (CurTok == ',') {
             getNextToken();
         } else if (CurTok == ')') {
@@ -332,8 +336,8 @@ static std::unique_ptr<ExprAST>  ParseNameExpr() {
 
 static std::unique_ptr<ExprAST> ParseParenExpr() {
     getNextToken();                 // consume '('
-    auto E = ParseExpression();     // should consume all tokens in the expression
-    if (!E) {return nullptr;}       // propagate nullptr if ParseExpression fail
+    auto E = ParseFull();     // should consume all tokens in the expression
+    if (!E) {return nullptr;}       // propagate nullptr if ParseFull fail
     if (CurTok != ')') {
         return LogError("Unclosed parentheses");
     }
@@ -359,7 +363,7 @@ static std::map<char, int> BinopPrecedence;
 
 // returns precedence of -1 if CurTok is not a valid bin op
 static int GetTokPrecedence() {
-    if (BinopPrecedence.contains(CurTok)) {
+    if (BinopPrecedence.count(CurTok)) {
         return BinopPrecedence[CurTok];
     } else {
         return -1;
@@ -509,7 +513,6 @@ int main() {
     BinopPrecedence['-'] = 20;
     BinopPrecedence['*'] = 30;
     BinopPrecedence['/'] = 30;
-    BinopPrecedence['//'] = 30;
     BinopPrecedence['%'] = 30;
 
     // Prime the first tokens
