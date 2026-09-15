@@ -250,7 +250,7 @@ Value *NumberExprAST::codegen() {
 }
 
 Value *LogErrorV(const char *Str) {
-    LogError(Str);
+    fprintf(stderr, "Error: %s\n", Str);
     return nullptr;
 }
 
@@ -608,8 +608,12 @@ static std::unique_ptr<FunctionAST> ParseFunction() {
 */
 
 static void HandleDefinition() {
-  if (ParseFunction()) {
-    fprintf(stderr, "Parsed a function definition.\n");
+  if (auto FnAST = ParseFunction()) {
+    if (auto *FnIR = FnAST->codegen()) {
+      fprintf(stderr, "Read function definition:");
+      FnIR->print(errs());
+      fprintf(stderr, "\n");
+    }
   } else {
     // Skip token for error recovery.
     getNextToken();
@@ -618,8 +622,15 @@ static void HandleDefinition() {
 
 static void HandleTopLevelExpression() {
   // Evaluate a top-level expression into an anonymous function.
-  if (ParseTopLevelExpr()) {
-    fprintf(stderr, "Parsed a top-level expr\n");
+  if (auto FnAST = ParseTopLevelExpr()) {
+    if (auto *FnIR = FnAST->codegen()) {
+        fprintf(stderr, "Read top-level expression:");
+        FnIR->print(errs());
+        fprintf(stderr, "\n");
+
+        // remove anonymous expression once processed
+        FnIR->eraseFromParent();
+    }
   } else {
     // Skip token for error recovery.
     getNextToken();
