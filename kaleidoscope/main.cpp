@@ -662,6 +662,15 @@ static void MainLoop() {
     ##############################
 */
 
+static void InitializeModule() {
+  // Make new context and module
+  TheContext = std::make_unique<LLVMContext>();
+  TheModule = std::make_unique<Module>("my cool jit", *TheContext);
+
+  // Create a new builder for the module
+  Builder = std::make_unique<IRBuilder<>>(*TheContext);
+}
+
 int main() {
     // Install standard binary operators.
     BinopPrecedence['<'] = 10;
@@ -677,8 +686,13 @@ int main() {
     fprintf(stderr, "ready> ");
     getNextToken();
 
+    InitializeModule();
+
     // Run main interpreter loop
     MainLoop();
+
+    // Print out all of the generated code.
+    TheModule->print(errs(), nullptr);
 
     return 0;
 }
