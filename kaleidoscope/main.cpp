@@ -39,7 +39,7 @@ using namespace llvm;
 */
 
 static std::string IdentifierStr;   // filled in with variable name
-static double NumVal;               // filled in with number value
+static std::string NumStr;          // filled in with number string
 
 // Possible token types
 // Special characters are returned as their ASCII value, comments are skipped
@@ -69,16 +69,13 @@ static int gettok() {
     }
     
     // Numbers
-    //* this is only positive values ??, need negative sign
-    //* this allows numbers like 1.2.3, needs to be fixed
+    //* this is only positive values, need negative sign
     if (isdigit(LastChar) || LastChar == '.') {
-        std::string NumStr;
+        NumStr = "";
         while (isdigit(LastChar) || LastChar == '.') {
             NumStr += LastChar;
             LastChar = getchar();
         }
-        // convert the string to a double
-        NumVal = strtod(NumStr.c_str(), 0);
         return tok_number;
     }
 
@@ -442,6 +439,11 @@ std::unique_ptr<PrototypeAST> LogErrorP(const char *Str) {
 static std::unique_ptr<ExprAST> ParseFull();
 
 static std::unique_ptr<ExprAST> ParseNumberExpr() {
+    // assert at most 1 decimal point in number string
+    if (ptrdiff_t count = std::count(NumStr.begin(), NumStr.end(), '.'); count > 1) {
+        return LogError("Multiple decimal points in number");
+    }
+    double NumVal = strtod(NumStr.c_str(), 0);
     auto Result = std::make_unique<NumberExprAST>(NumVal);
     getNextToken();
     return std::move(Result);
