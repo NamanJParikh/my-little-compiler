@@ -1,11 +1,24 @@
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Verifier.h"
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
+
+using namespace llvm;
 
 /* 
     #############################
@@ -147,6 +160,7 @@ namespace {
 class ExprAST  {
     public:
         virtual ~ExprAST() = default;
+        virtual Value *codegen() = 0;
 };
 
 class NumberExprAST : public ExprAST {
@@ -154,6 +168,7 @@ class NumberExprAST : public ExprAST {
         double Val;                                 // Numerical value
     public:
         NumberExprAST(double Val) : Val(Val) {}
+        Value *codegen() override;
 };
 
 class VariableExprAST : public ExprAST {
@@ -161,6 +176,7 @@ class VariableExprAST : public ExprAST {
         std::string Name;                           // Variable name
     public:
         VariableExprAST(const std::string &Name) : Name(Name) {}
+        Value *codegen() override;
 };
 
 //* TODO- will later want to extend the character Op to a string to support
@@ -172,6 +188,7 @@ class BinaryExprAST : public ExprAST {
     public:
         BinaryExprAST(char Op, std::unique_ptr<ExprAST> LHS, std::unique_ptr<ExprAST> RHS)
             : Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
+        Value *codegen() override;
 };
 
 class CallExprAST : public ExprAST {
@@ -181,6 +198,7 @@ class CallExprAST : public ExprAST {
     public:
         CallExprAST(const std::string &Callee, std::vector<std::unique_ptr<ExprAST>> Args)
             : Callee(Callee), Args(std::move(Args)) {}
+        Value *codegen() override;
 };
 
 class PrototypeAST {
@@ -192,6 +210,7 @@ class PrototypeAST {
             : Name(Name), Args(std::move(Args)) {}
 
         const std::string &getName() const { return Name; }
+        virtual Function *codegen();
 };
 
 class FunctionAST {
@@ -202,6 +221,7 @@ class FunctionAST {
         FunctionAST(std::unique_ptr<PrototypeAST> Proto,
                 std::unique_ptr<ExprAST> Body)
         : Proto(std::move(Proto)), Body(std::move(Body)) {}
+        Function *codegen();
 };
 
 }
@@ -500,4 +520,149 @@ int main() {
     MainLoop();
 
     return 0;
+}
+
+/*
+    #############################
+    ###      LLVM IR Gen      ###
+    #############################
+
+    Expressions in the AST are converted to LLVM Values, while prototypes and 
+    functions are converted to LLVM Functions.
+*/
+
+static std::unique_ptr<LLVMContext> TheContext;
+static std::unique_ptr<IRBuilder<>> Builder;
+static std::unique_ptr<Module> TheModule;
+static std::map<std::string, Value *> NamedValues;
+
+Value *NumberExprAST::codegen() {
+  return ConstantFP::get(*TheContext, APFloat(Val));
+}
+
+Value *LogErrorV(const char *Str) {
+    LogError(Str);
+    return nullptr;
+}
+
+Value *VariableExprAST::codegen() {
+    // look up var name in map
+    Value *V = NamedValues[Name];
+    if (!V) {
+        LogErrorV("Unknown variable referenced");
+    }
+    return V;
+}
+
+//* TODO- add more binary operators as desired
+Value *BinaryExprAST::codegen() {
+    Value *L = LHS->codegen();
+    Value *R = RHS->codegen();
+
+    if (!L || !R) {
+        return nullptr;
+    }
+
+    switch (Op) {
+        case '+':
+            return Builder->CreateFAdd(L, R, "addtmp");
+        case '-':
+            return Builder->CreateFSub(L, R, "subtmp");
+        case '*':
+            return Builder->CreateFMul(L, R, "multmp");
+        case '/':
+            return Builder->CreateFDiv(L, R, "addtmp");
+        case '<':
+            L = Builder->CreateFCmpULT(L, R, "cmptmp");
+            // Convert bool 0/1 to double 0.0 or 1.0
+            return Builder->CreateUIToFP(L, Type::getDoubleTy(*TheContext),
+                                        "booltmp");
+        default:
+            return LogErrorV("invalid binary operator");
+    }
+}
+
+Value *CallExprAST::codegen() {
+    // lookup callee in the module
+    Function *CalleeF = TheModule->getFunction(Callee);
+    if (!CalleeF) {
+        return LogErrorV("Unknown function referenced");
+    }
+
+    // check number of args is appropriate
+    unsigned arg_num = CalleeF->arg_size();
+    if (Args.size() != arg_num) {
+        return LogErrorV("Incorrect number of arguments passed");
+    }
+
+    // generate LLVM IR for each arg and make vector
+    std::vector<Value *> ArgsV;
+    for (unsigned i = 0; i < arg_num; ++i) {
+        ArgsV.push_back(Args[i]->codegen());
+        if (!ArgsV.back())
+            return nullptr;
+    }
+
+    return Builder->CreateCall(CalleeF, ArgsV, "calltmp");
+}
+
+Function *PrototypeAST::codegen() {
+    // input arg types, ArgSize doubles
+    std::vector<Type *> Doubles(Args.size(), Type::getDoubleTy(*TheContext));
+    // function type: takes Doubles as input, returns Double
+    FunctionType *FT = 
+        FunctionType::get(Type::getDoubleTy(*TheContext), Doubles, false);
+
+    // prototypes registered in TheModule
+    Function *F = Function::Create(FT, Function::ExternalLinkage, Name, TheModule.get());
+
+    // name args in F
+    unsigned idx = 0;
+    for (auto &Arg : F->args()) {
+        Arg.setName(Args[idx]);
+        idx++;
+    }
+
+    return F;
+}
+
+Function *FunctionAST::codegen() {
+    // check if function already defined
+    Function *TheFunction = TheModule->getFunction(Proto->getName());
+    // if not make the prototype
+    if (!TheFunction) {
+        TheFunction = Proto->codegen();
+    }
+    // propagate prototype codegen failure
+    if (!TheFunction) {
+        return nullptr;
+    }
+    // if function was already defined, don't allow it to be overriden
+    // however, it may have been declared but not defined, which is fine
+    // so, enforce that the body is empty
+    if (!TheFunction->empty()) {
+        return (Function*)LogErrorV("Function cannot be redefined.");
+    }
+
+    // make basic block for function body
+    BasicBlock *BB = BasicBlock::Create(*TheContext, "entry", TheFunction);
+    Builder->SetInsertPoint(BB);
+
+    // reset NamedValues so it only knows arguments and vars inside the function
+    NamedValues.clear();
+    for (auto &Arg : TheFunction->args()) {
+        NamedValues[std::string(Arg.getName())] = &Arg;
+    }
+
+    // generate body expression
+    Value *RetVal = Body->codegen();
+    // if error, remove the function before returning
+    if (!RetVal) {
+        TheFunction->eraseFromParent();
+        return nullptr;
+    }
+
+    Builder->CreateRet(RetVal);
+    verifyFunction(*TheFunction);
+    return TheFunction;
 }
