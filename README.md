@@ -37,3 +37,14 @@ so I make no claims as to the quality or optimization. The goals for me here are
 
 The LLVM tutorial creates a compiler for the toy language Kaleidoscope, and my
 following of it can be found in ```./kaleidoscope```.
+
+### Chapters 1, 2, 3
+Largely followed the tutorial but skipping extern. Tbh because I just don't care 
+about it.
+
+### Chapter 4
+Decided to skip optimizatons and JIT in favor of completing the language syntax.
+I will return after the later chapters on building your own JIT. 
+
+### Chapter 5
+Implemented the lexer, AST, and parser portions without the tutorial.
