@@ -16,8 +16,7 @@ my_var := 5
 ```
 
 ### Types
-For simplicity, all values will be 64-bit floats, as in the tutorial. Negative
-numbers can be defined with the use of ```~``` as a negative sign.
+For simplicity, all values will be 64-bit floats, as in the tutorial.
 
 ### Operations and Comparisons
 Standard numerical operations will be supported. That is, addition (```+```),
