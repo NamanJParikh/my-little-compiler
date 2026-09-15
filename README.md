@@ -5,7 +5,7 @@
 So I decided to make a compiler. This is primarily an educational project for me,
 so I make no claims as to the quality or optimization. The goals for me here are
 
-1. Get my C++ groove back. 
+1. Get back into C++. 
     - I haven't touched C++ in a long time. Never needed it in college outside a 
     small Arduino project. 
 2. Bridge the gap from theory to implementation
@@ -27,10 +27,11 @@ so I make no claims as to the quality or optimization. The goals for me here are
     to projects like LLVM one day. Consider this project my introduction to LLVM
     and preparation to dig deeper into the guts of LLVM's representations and 
     optimizations.
-5. Lower and lower we go
-    - Currently, I hope to go lower level in my career. It seems more technically
-    interesting to me and remains all the more relevant with increasing optimization
-    and efficiency needed for AI calculations. 
+5. Going lower level
+    - Low level programming seems more technically interesting to me and remains
+    all the more relevant with increasing optimization and efficiency needed for
+    AI calculations. I'd like to dig into the LLVM optimization passes and the
+    backend to learn more about connecting high level code to machine instructions.
 
 ## Step 1: The LLVM Tutorial
 
