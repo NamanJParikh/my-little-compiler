@@ -72,7 +72,7 @@ static int gettok() {
     //* this is only positive values, need negative sign
     if (isdigit(LastChar) || LastChar == '.') {
         NumStr = "";
-        while (isdigit(LastChar) || LastChar == '.') {
+        while (isalnum(LastChar) || LastChar == '.') {
             NumStr += LastChar;
             LastChar = getchar();
         }
@@ -439,9 +439,14 @@ std::unique_ptr<PrototypeAST> LogErrorP(const char *Str) {
 static std::unique_ptr<ExprAST> ParseFull();
 
 static std::unique_ptr<ExprAST> ParseNumberExpr() {
-    // assert at most 1 decimal point in number string
+    // assert at most 1 decimal point in number
     if (ptrdiff_t count = std::count(NumStr.begin(), NumStr.end(), '.'); count > 1) {
         return LogError("Multiple decimal points in number");
+    }
+    for (char n : NumStr) {
+        if (!isdigit(n) && n != '.') {
+            return LogError("Non-numerical character in number");
+        }
     }
     double NumVal = strtod(NumStr.c_str(), 0);
     auto Result = std::make_unique<NumberExprAST>(NumVal);
