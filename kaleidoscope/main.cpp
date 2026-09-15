@@ -579,16 +579,19 @@ static std::unique_ptr<PrototypeAST> ParseProto() {
     if (CurTok != '(') {
         return LogErrorP("Function name not followed by parens");
     }
+
     std::vector<std::string> ArgNames;      // parse function args
     while (getNextToken() == tok_name) {
         ArgNames.push_back(IdentifierStr);
+        if (getNextToken() != ',') {
+            break;
+        }
     }
-
     if (CurTok != ')') {
-        return LogErrorP("Unclosed parens in function prototype");
+        return LogErrorP("Functions args not separated by commas or unclosed parentheses");
     }
-    getNextToken();                         // consume ')'
 
+    getNextToken();                         // consume ')'
     return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
 }
 
