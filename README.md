@@ -28,10 +28,10 @@ so I make no claims as to the quality or optimization. The goals for me here are
     and preparation to dig deeper into the guts of LLVM's representations and 
     optimizations.
 5. Going lower level
-    - Low level programming seems more technically interesting to me and remains
-    all the more relevant with increasing optimization and efficiency needed for
-    AI calculations. I'd like to dig into the LLVM optimization passes and the
-    backend to learn more about connecting high level code to machine instructions.
+    - I'm very interested in working more with instruction sets, programming
+    optimization, and thinking about how code actually runs on hardware. Through
+    this project, I will dig into the LLVM optimization passes and backend to
+    learn more about connecting high-level computing tasks to optimized instructions.
 
 ## Step 1: The LLVM Tutorial
 
