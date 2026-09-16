@@ -51,7 +51,11 @@ enum Token {
     // Keywords
     tok_def = -3,
     // EOF
-    tok_eof = -4
+    tok_eof = -4,
+    // if, then, else
+    tok_if = -5,
+    tok_then = -6,
+    tok_else = -7
 };
 
 /* 
@@ -88,6 +92,12 @@ static int gettok() {
         // identify if it's a keyword. if not, it's a variable/function name
         if (IdentifierStr == "def") {
             return tok_def;
+        } else if (IdentifierStr == "if") {
+            return tok_if;
+        } else if (IdentifierStr == "then") {
+            return tok_then;
+        } else if (IdentifierStr == "else") {
+            return tok_else;
         } else {
             return tok_name;
         }
@@ -200,6 +210,19 @@ class CallExprAST : public ExprAST {
         Value *codegen() override;
 };
 
+class IfThenElseExprAST : public ExprAST {
+    private:
+        std::unique_ptr<ExprAST> If;
+        std::unique_ptr<ExprAST> Then;
+        std::unique_ptr<ExprAST> Else;
+    public:
+        IfThenElseExprAST(
+            std::unique_ptr<ExprAST>(If), std::unique_ptr<ExprAST>(Then),
+            std::unique_ptr<ExprAST>(Else)) : If(std::move(If)), 
+            Then(std::move(Then)), Else(std::move(Else)) {};
+        Value *codegen() override;
+};
+
 class PrototypeAST {
     private:
         std::string Name;                           // Function name
@@ -309,6 +332,54 @@ Value *CallExprAST::codegen() {
     }
 
     return Builder->CreateCall(CalleeF, ArgsV, "calltmp");
+}
+
+Value *IfThenElseExprAST::codegen() {
+    // codegen relevant expressions
+    Value *IfV = If->codegen();
+    Value *ThenV = Then->codegen();
+    Value *ElseV = Else->codegen();
+    if (!IfV || !ThenV || !ElseV) {return nullptr;}
+
+    // floating point not-equal: compare IfV to 0
+    // normalizes IfV to 0 if 0 and 1 if non-0
+    IfV = Builder->CreateFCmpONE(
+        IfV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
+
+    // get parent function, builder is inserting at end of function
+    Function *TheFunction = Builder->GetInsertBlock()->getParent();
+
+    // create blocks for then body, else body, and body after the if,then,else
+    BasicBlock *ThenBB = BasicBlock::Create(*TheContext, "then");
+    BasicBlock *ElseBB = BasicBlock::Create(*TheContext, "else");
+    BasicBlock *MergeBB = BasicBlock::Create(*TheContext, "ifcont");
+    
+    // add conditional branch to function
+    Builder->CreateCondBr(IfV, ThenBB, ElseBB);
+
+    // add block at end of function
+    TheFunction->insert(TheFunction->end(), ThenBB);
+    // add branch to merge block at end of then block
+    Builder->SetInsertPoint(ThenBB);
+    Builder->CreateBr(MergeBB);
+    // update ThenBB to the new then block with the branch to MergeBB
+    ThenBB = Builder->GetInsertBlock();
+
+    // repeat for else block
+    TheFunction->insert(TheFunction->end(), ElseBB);
+    Builder->SetInsertPoint(ElseBB);
+    Builder->CreateBr(MergeBB);
+    ElseBB = Builder->GetInsertBlock();
+
+    // add merge block
+    TheFunction->insert(TheFunction->end(), MergeBB);
+    Builder->SetInsertPoint(MergeBB);
+    // create PHI node to selectively update value based on the branch taken
+    PHINode *PN = Builder->CreatePHI(Type::getDoubleTy(*TheContext), 2, "iftmp");
+    PN->addIncoming(ThenV, ThenBB);
+    PN->addIncoming(ElseV, ElseBB);
+
+    return PN;
 }
 
 Function *PrototypeAST::codegen() {
@@ -505,7 +576,7 @@ static std::unique_ptr<ExprAST>  ParseNameExpr() {
 
 static std::unique_ptr<ExprAST> ParseParenExpr() {
     getNextToken();                 // consume '('
-    auto E = ParseFull();     // should consume all tokens in the expression
+    auto E = ParseFull();           // should consume all tokens in the expression
     if (!E) {return nullptr;}       // propagate nullptr if ParseFull fail
     if (CurTok != ')') {
         return LogError("Unclosed parentheses");
@@ -514,11 +585,31 @@ static std::unique_ptr<ExprAST> ParseParenExpr() {
     return E;                       // return the expression parsed
 }
 
+static std::unique_ptr<ExprAST> ParseIfThenElseExpr() {
+    getNextToken();                 // consume 'if'
+    auto If = ParseFull();
+    if (!If) {return nullptr;}
+
+    if (CurTok != tok_then) {return LogError("Expected then after if");}
+    getNextToken();                 // consume 'then'
+    auto Then = ParseFull();
+    if (!Then) {return nullptr;}
+
+    if (CurTok != tok_else) {return LogError("Expected else after if, then");}
+    getNextToken();                 // consume 'else'
+    auto Else = ParseFull();
+    if (!Else) {return nullptr;}
+
+    return std::make_unique<IfThenElseExprAST>(
+        std::move(If), std::move(Then), std::move(Else));
+}
+
 static std::unique_ptr<ExprAST> ParseSimple() {
     switch (CurTok) {
         case tok_number: return ParseNumberExpr();
         case tok_name: return ParseNameExpr();
         case '(': return ParseParenExpr();
+        case tok_if: return ParseIfThenElseExpr();
         default: return LogError("unknown token when expecting an expression");
     }
 }
