@@ -1,6 +1,6 @@
 // Compile statement:
 // clang++ -g -O3 main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core` -o compile
-// clang++ -g -03 main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core orcjit native` -o compile
+// clang++ -g main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core orcjit native` -o compile
 
 
 #include "llvm/ADT/APFloat.h"
@@ -59,7 +59,10 @@ enum Token {
     tok_then = -6,
     tok_else = -7,
     // for loop
-    tok_for = -8
+    tok_for = -8,
+    // user-defined operators
+    tok_unary = -9,
+    tok_binary = -10
 };
 
 /* 
@@ -104,6 +107,10 @@ static int gettok() {
             return tok_else;
         } else if (IdentifierStr == "for") {
             return tok_for;
+        } else if (IdentifierStr == "unary") {
+            return tok_unary;
+        } else if (IdentifierStr == "binary") {
+            return tok_binary;
         } else {
             return tok_name;
         }
@@ -206,6 +213,16 @@ class BinaryExprAST : public ExprAST {
         Value *codegen() override;
 };
 
+class UnaryExprAST : public ExprAST {
+    private:
+        char Op;
+        std::unique_ptr<ExprAST> Operand;
+    public:
+        UnaryExprAST(char Op, std::unique_ptr<ExprAST> Operand) : 
+            Op(Op), Operand(std::move(Operand)) {}
+        Value *codegen() override;
+};
+
 class CallExprAST : public ExprAST {
     private:
         std::string Callee;                         // Function name
@@ -245,12 +262,26 @@ class PrototypeAST {
     private:
         std::string Name;                           // Function name
         std::vector<std::string> Args;              // Function inputs
-    public:
-        PrototypeAST(const std::string &Name, std::vector<std::string> Args)
-            : Name(Name), Args(std::move(Args)) {}
+        bool IsOperator;
+        unsigned Precedence;                        // Precedence if binary op
 
-        const std::string &getName() const { return Name; }
+    public:
+        PrototypeAST(const std::string &Name, std::vector<std::string> Args, 
+            bool IsOperator = false, unsigned Prec = 0) : Name(Name), 
+            Args(std::move(Args)), IsOperator(IsOperator), Precedence(Prec) {}
+
         virtual Function *codegen();
+        
+        const std::string &getName() const { return Name; }
+        bool isUnaryOp() const { return IsOperator && Args.size() == 1; }
+        bool isBinaryOp() const { return IsOperator && Args.size() == 2; }
+
+        char getOperatorName() const {
+            assert(isUnaryOp() || isBinaryOp());
+            return Name[Name.size() - 1];
+        }
+
+        unsigned getBinaryPrecedence() const { return Precedence; }
 };
 
 class FunctionAST {
@@ -281,6 +312,21 @@ static std::unique_ptr<LLVMContext> TheContext;
 static std::unique_ptr<IRBuilder<>> Builder;
 static std::unique_ptr<Module> TheModule;
 static std::map<std::string, Value *> NamedValues;
+static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
+static std::map<char, int> BinopPrecedence;
+
+Function *getFunction(std::string Name) {
+    // check if the function has already been added to the current module.
+    if (auto *F = TheModule->getFunction(Name)) {return F;}
+
+    // If not, check whether we can codegen the declaration from some existing
+    // prototype
+    auto FI = FunctionProtos.find(Name);
+    if (FI != FunctionProtos.end()) {return FI->second->codegen();}
+
+    // If no existing prototype exists, return null.
+    return nullptr;
+}
 
 Value *NumberExprAST::codegen() {
   return ConstantFP::get(*TheContext, APFloat(Val));
@@ -298,6 +344,16 @@ Value *VariableExprAST::codegen() {
         LogErrorV("Unknown variable referenced");
     }
     return V;
+}
+
+Value *UnaryExprAST::codegen() {
+    Value *OperandV = Operand->codegen();
+    if (!OperandV) {return nullptr;}
+
+    Function *F = getFunction(std::string("unary") + Op);
+    if (!F) {return LogErrorV("Unknown unary operator");}
+
+    return Builder->CreateCall(F, OperandV, "unop");
 }
 
 //* TODO- add more binary operators as desired
@@ -324,8 +380,16 @@ Value *BinaryExprAST::codegen() {
             return Builder->CreateUIToFP(L, Type::getDoubleTy(*TheContext),
                                         "booltmp");
         default:
-            return LogErrorV("invalid binary operator");
+            break;
     }
+
+    // if not recognized, it might be a user-defined operator
+    Function *F = getFunction(std::string("binary") + Op);
+    assert(F && "binary operator not found!");
+
+    Value *Ops[2] = { L, R };
+    return Builder->CreateCall(F, Ops, "binop");
+
 }
 
 Value *CallExprAST::codegen() {
@@ -485,21 +549,16 @@ Function *PrototypeAST::codegen() {
 }
 
 Function *FunctionAST::codegen() {
-    // check if function already defined
-    Function *TheFunction = TheModule->getFunction(Proto->getName());
-    // if not make the prototype
-    if (!TheFunction) {
-        TheFunction = Proto->codegen();
-    }
-    // propagate prototype codegen failure
-    if (!TheFunction) {
-        return nullptr;
-    }
-    // if function was already defined, don't allow it to be overriden
-    // however, it may have been declared but not defined, which is fine
-    // so, enforce that the body is empty
-    if (!TheFunction->empty()) {
-        return (Function*)LogErrorV("Function cannot be redefined.");
+    // Transfer ownership of the prototype to the FunctionProtos map, but keep a
+    // reference to it for use below.
+    auto &P = *Proto;
+    FunctionProtos[Proto->getName()] = std::move(Proto);
+    Function *TheFunction = getFunction(P.getName());
+    if (!TheFunction) {return nullptr;}
+
+    // install if binary operator
+    if (P.isBinaryOp()) {
+        BinopPrecedence[P.getOperatorName()] = P.getBinaryPrecedence();
     }
 
     // make basic block for function body
@@ -735,12 +794,22 @@ static std::unique_ptr<ExprAST> ParseSimple() {
     }
 }
 
+static std::unique_ptr<ExprAST> ParseUnary() {
+    // if not operator, must be another simple expr
+    if (!isascii(CurTok) || CurTok == '(' || CurTok == ',') {
+        return ParseSimple();
+    }
+    
+    int Op = CurTok;
+    getNextToken();                         // consume operation
+    auto Operand = ParseUnary();
+    if (!Operand) {return nullptr;}
+    return std::make_unique<UnaryExprAST>(Op, std::move(Operand));
+}
+
 /* 
     ##### Parsing Full Expressions ##### 
 */
-
-// specified later in parsing loop
-static std::map<char, int> BinopPrecedence;
 
 // returns precedence of -1 if CurTok is not a valid bin op
 static int GetTokPrecedence() {
@@ -765,7 +834,7 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
         int BinOp = CurTok;
         getNextToken();                     // consume bin op
 
-        auto RHS = ParseSimple();           // consumes RHS
+        auto RHS = ParseUnary();           // consumes RHS
         if (!RHS) {return nullptr;}         // propagate pointer if parse fails
 
         int NextPrec = GetTokPrecedence();
@@ -781,7 +850,7 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 }
 
 static std::unique_ptr<ExprAST> ParseFull() {
-    auto LHS = ParseSimple();
+    auto LHS = ParseUnary();
     if (!LHS) {return nullptr;}             // propagate nullptr if fail
     return ParseBinOpRHS(0, std::move(LHS));
 }
@@ -804,11 +873,51 @@ static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
 */
 
 static std::unique_ptr<PrototypeAST> ParseProto() {
-    if (CurTok != tok_name) {
-        return LogErrorP("Function name not found in prototype");
+    std::string FnName;
+    unsigned Kind = 0;              // 0 = identifier, 1 = unary, 2 = binary.
+    unsigned BinaryPrecedence = 30;
+
+    switch (CurTok) {
+        case tok_name:
+            FnName = IdentifierStr;         // parse function name
+            Kind = 0;
+            getNextToken();                 // consume FnName
+            break;
+        case tok_unary:
+            getNextToken();                 // consume 'unary'
+            if (!isascii(CurTok)) {return LogErrorP("Expected unary operator");}
+            FnName = "unary";
+            FnName += (char)CurTok;         // build FnName = "unary{Op}"
+            Kind = 1;
+            getNextToken();                 // consume operator symbol
+            break;
+        case tok_binary:
+            getNextToken();                 // consume 'binary'
+            if (!isascii(CurTok)) {return LogErrorP("Expected binary operator");}
+            FnName = "binary";
+            FnName += (char)CurTok;         // build FnName = "binary{Op}"
+            Kind = 2;
+            getNextToken();                 // consume operator symbol
+
+            // set precedence if it was given
+            if (CurTok == tok_number) {
+                // ensure precedence is of proper format
+                for (char c : NumStr) {
+                    if (!std::isdigit(c)) {
+                        return LogErrorP("Invalid precedence: contains non-digit");
+                    }
+                }
+                double NumVal = strtod(NumStr.c_str(), 0);
+                if (NumVal < 1) {
+                    return LogErrorP("Invalid precedence: must be at least 1");
+                }
+
+                BinaryPrecedence = (unsigned)NumVal;
+                getNextToken();
+            }
+            break;
+        default: return LogErrorP("Expected function name in prototype");
     }
-    std::string FnName = IdentifierStr;     // parse function name
-    getNextToken();                         // consume FnName
 
     if (CurTok != '(') {
         return LogErrorP("Function name not followed by parens");
@@ -826,7 +935,15 @@ static std::unique_ptr<PrototypeAST> ParseProto() {
     }
 
     getNextToken();                         // consume ')'
-    return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
+
+    // enforce correct number of args for the kind of operator
+    // Kind is defined as the correct number of args, so Kind && ArgNames.size()
+    // is Kind iff ArgNames.size() == Kind
+    if (Kind && ArgNames.size() != Kind) {
+        return LogErrorP("Invalid number of operands for operator");
+    }
+    return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), Kind != 0,
+                                         BinaryPrecedence);
 }
 
 static std::unique_ptr<FunctionAST> ParseFunction() {
