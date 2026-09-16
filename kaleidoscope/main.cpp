@@ -1,5 +1,7 @@
 // Compile statement:
 // clang++ -g -O3 main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core` -o compile
+// clang++ -g -03 main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core orcjit native` -o compile
+
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
@@ -55,7 +57,9 @@ enum Token {
     // if, then, else
     tok_if = -5,
     tok_then = -6,
-    tok_else = -7
+    tok_else = -7,
+    // for loop
+    tok_for = -8
 };
 
 /* 
@@ -98,6 +102,8 @@ static int gettok() {
             return tok_then;
         } else if (IdentifierStr == "else") {
             return tok_else;
+        } else if (IdentifierStr == "for") {
+            return tok_for;
         } else {
             return tok_name;
         }
@@ -220,6 +226,18 @@ class IfThenElseExprAST : public ExprAST {
             std::unique_ptr<ExprAST>(If), std::unique_ptr<ExprAST>(Then),
             std::unique_ptr<ExprAST>(Else)) : If(std::move(If)), 
             Then(std::move(Then)), Else(std::move(Else)) {};
+        Value *codegen() override;
+};
+
+class ForExprAST : public ExprAST {
+    private:
+        std::string VarName;
+        std::unique_ptr<ExprAST> Init, Step, End, Body;
+    public:
+        ForExprAST(const std::string VarName, std::unique_ptr<ExprAST>(Init),
+            std::unique_ptr<ExprAST>(Step), std::unique_ptr<ExprAST>(End),
+            std::unique_ptr<ExprAST>(Body)) : VarName(VarName), Init(std::move(Init)),
+            Step(std::move(Step)), End(std::move(End)), Body(std::move(Body)) {}
         Value *codegen() override;
 };
 
@@ -380,6 +398,70 @@ Value *IfThenElseExprAST::codegen() {
     PN->addIncoming(ElseV, ElseBB);
 
     return PN;
+}
+
+Value *ForExprAST::codegen() {
+    Value *InitV = Init->codegen();
+    if (!InitV) {return nullptr;}
+
+    // get parent function
+    Function *TheFunction = Builder->GetInsertBlock()->getParent();
+    // get block before start of for loop so we can insert at the end of it to repeat
+    BasicBlock *PreheaderBB = Builder->GetInsertBlock();
+    // add block for the loop
+    BasicBlock *LoopBB = BasicBlock::Create(*TheContext, "loop", TheFunction);
+
+    // branch into the loop block and start inserting
+    Builder->CreateBr(LoopBB);
+    Builder->SetInsertPoint(LoopBB);
+
+    // make a PHI node to maintain the loop variable
+    PHINode *Variable = Builder->CreatePHI(Type::getDoubleTy(*TheContext), 2, VarName);
+    Variable->addIncoming(InitV, PreheaderBB);
+
+    // if loop var shadows an existing var, save the existing value 
+    Value *OldVal = NamedValues[VarName];
+    NamedValues[VarName] = Variable;
+
+    // implicitly generates code for the body with insert point in loop
+    if (!Body->codegen()) {return nullptr;}
+
+    // generate step or set it to 1.0 by default
+    Value *StepV = nullptr;
+    if (Step) {
+        StepV = Step->codegen();
+        if (!StepV) {return nullptr;}
+    } else {
+        StepV = ConstantFP::get(*TheContext, APFloat(1.0));
+    }
+  
+    // add step to loop var to get it's next value
+    Value *NextV = Builder->CreateFAdd(Variable, StepV, "nextvar");
+
+    Value *EndCond = End->codegen();
+    if (!EndCond) {return nullptr;}
+    // make boolean condition just as in if,then,else
+    EndCond = Builder->CreateFCmpONE(
+        EndCond, ConstantFP::get(*TheContext, APFloat(0.0)), "loopcond");
+
+    // get loop block at end of loop
+    BasicBlock *LoopEndBB = Builder->GetInsertBlock();
+    BasicBlock *AfterBB = BasicBlock::Create(*TheContext, "afterloop", TheFunction);
+
+    // conditionally branch back to loop or leave loop based on end condition
+    Builder->CreateCondBr(EndCond, LoopBB, AfterBB);
+
+    Builder->SetInsertPoint(AfterBB);
+    Variable->addIncoming(NextV, LoopEndBB);
+
+    // restore original var if it existed or remove loop var
+    if (OldVal)
+        NamedValues[VarName] = OldVal;
+    else
+        NamedValues.erase(VarName);
+
+    // return null
+    return Constant::getNullValue(Type::getDoubleTy(*TheContext));
 }
 
 Function *PrototypeAST::codegen() {
@@ -604,12 +686,51 @@ static std::unique_ptr<ExprAST> ParseIfThenElseExpr() {
         std::move(If), std::move(Then), std::move(Else));
 }
 
+static std::unique_ptr<ExprAST> ParseForExpr() {
+    getNextToken();                 // consume 'for'
+
+    if (CurTok != tok_name) {return LogError("Incorrect for loop formatting");}
+    std::string VarName = IdentifierStr;
+    getNextToken();
+    
+    if (CurTok != '=') {return LogError("Incorrect for loop formatting");}
+    getNextToken();                 // consume '='
+
+    auto Init = ParseFull();
+    if (!Init) {return nullptr;}
+    
+    if (CurTok != ',') {return LogError("Incorrect for loop formatting");}
+    getNextToken();                 // consume ','
+
+    auto End = ParseFull();
+    if (!End) {return nullptr;}
+
+    // make step optional, can default to 1
+    std::unique_ptr<ExprAST> Step;
+    if (CurTok == ',') {
+        getNextToken();             // consume ','
+        auto Step = ParseFull();
+        if (!Step) {return nullptr;}
+    }
+
+    if (CurTok != ':') {return LogError("Incorrect for loop formatting");}
+    getNextToken();                 // consume ':'
+
+    auto Body = ParseFull();
+    if (!Body) {return nullptr;}
+
+    return std::make_unique<ForExprAST>(VarName, std::move(Init), std::move(Step),
+        std::move(End), std::move(Body));
+    
+}
+
 static std::unique_ptr<ExprAST> ParseSimple() {
     switch (CurTok) {
         case tok_number: return ParseNumberExpr();
         case tok_name: return ParseNameExpr();
         case '(': return ParseParenExpr();
         case tok_if: return ParseIfThenElseExpr();
+        case tok_for: return ParseForExpr();
         default: return LogError("unknown token when expecting an expression");
     }
 }
