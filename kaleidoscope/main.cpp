@@ -885,18 +885,15 @@ static std::unique_ptr<ExprAST> ParseForExpr() {
 
 static std::unique_ptr<ExprAST> ParseWithExpr() {
     getNextToken();                         // consume 'with'
-    fprintf(stderr, "'with' consumed\n");
 
     std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> Vars;
     if (CurTok != tok_name) {return LogError("Expected at least one var in 'with'");}
 
     // parse the local vars
-    fprintf(stderr, "parsing local vars\n");
     while (true) {
         // parse var name
         std::string Name = IdentifierStr;
         getNextToken();                     // consume var name
-        fprintf(stderr, "name parsed: %s\n", Name.c_str());
 
         // initializations is optional, attempt to parse it
         std::unique_ptr<ExprAST> Init;
@@ -905,7 +902,6 @@ static std::unique_ptr<ExprAST> ParseWithExpr() {
             Init = ParseFull();
             if (!Init) {return nullptr;}
         }
-        fprintf(stderr, "value parsed\n");
         Vars.push_back(std::make_pair(Name, std::move(Init)));
 
         if (CurTok != ',') {break;}         // list over
@@ -914,17 +910,11 @@ static std::unique_ptr<ExprAST> ParseWithExpr() {
         if (CurTok != tok_name) {return LogError("Expected another variable name after ','");}
     }
 
-    fprintf(stderr, "parsing complete\n");
-
     if (CurTok != ':') {return LogError("Expected ':' after 'with'");}
     getNextToken();                         // consume ':'
 
-    fprintf(stderr, "':' parsed\n");
-
     auto Body = ParseFull();
     if (!Body) {return nullptr;}
-
-    fprintf(stderr, "body parsed, returning...\n");
 
     return std::make_unique<WithExprAST>(std::move(Vars), std::move(Body));
 }
