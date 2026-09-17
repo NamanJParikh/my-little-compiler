@@ -2,7 +2,6 @@
 // clang++ -g -O3 main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core` -o compile
 // clang++ -g main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core orcjit native` -O3 -o compile
 
-
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/BasicBlock.h"
@@ -14,6 +13,14 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
+#include "llvm/TargetParser/Host.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -24,6 +31,7 @@
 #include <vector>
 
 using namespace llvm;
+using namespace llvm::sys;
 
 /* 
     #############################
@@ -1185,7 +1193,58 @@ int main() {
     MainLoop();
 
     // Print out all of the generated code.
-    TheModule->print(errs(), nullptr);
+    // TheModule->print(errs(), nullptr);
+
+    // Write object code output file
+
+    // initialize all targets
+    InitializeAllTargetInfos();
+    InitializeAllTargets();
+    InitializeAllTargetMCs();
+    InitializeAllAsmParsers();
+    InitializeAllAsmPrinters();
+
+    // get system version
+    auto TargetTriple = sys::getDefaultTargetTriple();
+    TheModule->setTargetTriple(Triple(TargetTriple));
+
+    std::string Error;
+    auto Target = TargetRegistry::lookupTarget(TheModule->getTargetTriple(), Error);
+    if (!Target) {
+        errs() << Error;
+        return 1;
+    }
+
+    auto CPU = "generic";
+    auto Features = "";
+
+    TargetOptions opt;
+    auto TheTargetMachine = Target->createTargetMachine(
+        Triple(TargetTriple), CPU, Features, opt, Reloc::PIC_);
+
+    TheModule->setDataLayout(TheTargetMachine->createDataLayout());
+
+    auto Filename = "output.o";
+    std::error_code EC;
+    raw_fd_ostream dest(Filename, EC, sys::fs::OF_None);
+
+    if (EC) {
+        errs() << "Could not open file: " << EC.message();
+        return 1;
+    }
+
+    legacy::PassManager pass;
+    auto FileType = CodeGenFileType::ObjectFile;
+
+    if (TheTargetMachine->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
+        errs() << "TheTargetMachine can't emit a file of this type";
+        return 1;
+    }
+
+    pass.run(*TheModule);
+    dest.flush();
+
+    outs() << "Wrote " << Filename << "\n";
 
     return 0;
 }
