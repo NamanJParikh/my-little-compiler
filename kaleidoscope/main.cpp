@@ -1,6 +1,6 @@
 // Compile statement:
 // clang++ -g -O3 main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core` -o compile
-// clang++ -g main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core orcjit native` -o compile
+// clang++ -g main.cpp `llvm-config --cxxflags --ldflags --system-libs --libs core orcjit native` -O3 -o compile
 
 
 #include "llvm/ADT/APFloat.h"
@@ -62,7 +62,9 @@ enum Token {
     tok_for = -8,
     // user-defined operators
     tok_unary = -9,
-    tok_binary = -10
+    tok_binary = -10,
+    // local variables
+    tok_with = -11
 };
 
 /* 
@@ -111,6 +113,8 @@ static int gettok() {
             return tok_unary;
         } else if (IdentifierStr == "binary") {
             return tok_binary;
+        } else if (IdentifierStr == "with") {
+            return tok_with;
         } else {
             return tok_name;
         }
@@ -198,6 +202,19 @@ class VariableExprAST : public ExprAST {
         std::string Name;                           // Variable name
     public:
         VariableExprAST(const std::string &Name) : Name(Name) {}
+        const std::string &getName() const { return Name; }
+        Value *codegen() override;
+};
+
+class WithExprAST : public ExprAST {
+    private:
+        // vector of var names and values
+        std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> Vars;
+        std::unique_ptr<ExprAST> Body;
+    public:
+        WithExprAST(std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> Vars,
+                std::unique_ptr<ExprAST> Body) 
+            : Vars(std::move(Vars)), Body(std::move(Body)) {}
         Value *codegen() override;
 };
 
@@ -311,7 +328,7 @@ class FunctionAST {
 static std::unique_ptr<LLVMContext> TheContext;
 static std::unique_ptr<IRBuilder<>> Builder;
 static std::unique_ptr<Module> TheModule;
-static std::map<std::string, Value *> NamedValues;
+static std::map<std::string, AllocaInst *> NamedValues;
 static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 static std::map<char, int> BinopPrecedence;
 
@@ -328,6 +345,15 @@ Function *getFunction(std::string Name) {
     return nullptr;
 }
 
+// Create an alloca instruction in the entry block of the function for mutable
+// variables
+static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
+                                          StringRef VarName) {
+    IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
+                   TheFunction->getEntryBlock().begin());
+    return TmpB.CreateAlloca(Type::getDoubleTy(*TheContext), nullptr, VarName);
+}
+
 Value *NumberExprAST::codegen() {
   return ConstantFP::get(*TheContext, APFloat(Val));
 }
@@ -339,11 +365,53 @@ Value *LogErrorV(const char *Str) {
 
 Value *VariableExprAST::codegen() {
     // look up var name in map
-    Value *V = NamedValues[Name];
+    AllocaInst *V = NamedValues[Name];
     if (!V) {
         LogErrorV("Unknown variable referenced");
     }
-    return V;
+    return Builder->CreateLoad(V->getAllocatedType(), V, Name.c_str());
+}
+
+Value *WithExprAST::codegen() {
+    // may need to store old values of same variable names
+    std::vector<AllocaInst *> OldBindings;
+
+    // get parent function
+    Function *TheFunction = Builder->GetInsertBlock()->getParent();
+
+    // get all vars
+    for (unsigned i = 0, e = Vars.size(); i != e; ++i) {
+        const std::string &Name = Vars[i].first;
+        ExprAST *Init = Vars[i].second.get();
+
+        // initial assignment defaults to 0
+        Value *InitV;
+        if (Init) {
+            InitV = Init->codegen();
+            if (!InitV) {return nullptr;}
+        } else {
+            InitV = ConstantFP::get(*TheContext, APFloat(0.0));
+        }
+
+        // create alloca for variable and store value
+        AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Name);
+        Builder->CreateStore(InitV, Alloca);
+        
+        // store old value and overwrite with new value
+        OldBindings.push_back(NamedValues[Name]);
+        NamedValues[Name] = Alloca;
+    }
+
+    // generate body with all local variables created
+    Value *BodyV = Body->codegen();
+    if (!BodyV) {return nullptr;}
+
+    // restore old values
+    for (unsigned i = 0, e = Vars.size(); i != e; ++i) {
+        NamedValues[Vars[i].first] = OldBindings[i];
+    }
+
+    return BodyV;
 }
 
 Value *UnaryExprAST::codegen() {
@@ -358,6 +426,23 @@ Value *UnaryExprAST::codegen() {
 
 //* TODO- add more binary operators as desired
 Value *BinaryExprAST::codegen() {
+    // handle variable assignment separately since we don't want to emit the LHS
+    if (Op == '=') {
+        // LHS of assignment must be a variable name
+        VariableExprAST *LHSE = static_cast<VariableExprAST*>(LHS.get());
+        if (!LHSE) {return LogErrorV("assignment ('=') destination must be a variable");}
+
+        // get assignment value
+        Value *Val = RHS->codegen();
+        if (!Val) {return nullptr;}
+
+        // lookup variable and set value accordingly
+        AllocaInst *Alloca = NamedValues[LHSE->getName()];
+        if (!Alloca) {return LogErrorV("Unknown variable name");}
+        Builder->CreateStore(Val, Alloca);
+        return Val;
+    }
+
     Value *L = LHS->codegen();
     Value *R = RHS->codegen();
 
@@ -389,7 +474,6 @@ Value *BinaryExprAST::codegen() {
 
     Value *Ops[2] = { L, R };
     return Builder->CreateCall(F, Ops, "binop");
-
 }
 
 Value *CallExprAST::codegen() {
@@ -470,8 +554,10 @@ Value *ForExprAST::codegen() {
 
     // get parent function
     Function *TheFunction = Builder->GetInsertBlock()->getParent();
-    // get block before start of for loop so we can insert at the end of it to repeat
-    BasicBlock *PreheaderBB = Builder->GetInsertBlock();
+    // create Alloca for iteration variable, takes place of PreheaderBB
+    AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, VarName);
+    // store initial value into alloca
+    Builder->CreateStore(InitV, Alloca);
     // add block for the loop
     BasicBlock *LoopBB = BasicBlock::Create(*TheContext, "loop", TheFunction);
 
@@ -479,13 +565,11 @@ Value *ForExprAST::codegen() {
     Builder->CreateBr(LoopBB);
     Builder->SetInsertPoint(LoopBB);
 
-    // make a PHI node to maintain the loop variable
-    PHINode *Variable = Builder->CreatePHI(Type::getDoubleTy(*TheContext), 2, VarName);
-    Variable->addIncoming(InitV, PreheaderBB);
+    // PHI node not needed when using mutable variables
 
     // if loop var shadows an existing var, save the existing value 
-    Value *OldVal = NamedValues[VarName];
-    NamedValues[VarName] = Variable;
+    AllocaInst *OldVal = NamedValues[VarName];
+    NamedValues[VarName] = Alloca;
 
     // implicitly generates code for the body with insert point in loop
     if (!Body->codegen()) {return nullptr;}
@@ -499,25 +583,29 @@ Value *ForExprAST::codegen() {
         StepV = ConstantFP::get(*TheContext, APFloat(1.0));
     }
   
-    // add step to loop var to get it's next value
-    Value *NextV = Builder->CreateFAdd(Variable, StepV, "nextvar");
-
     Value *EndCond = End->codegen();
     if (!EndCond) {return nullptr;}
+
+    // add step to loop var to get it's next value and store in Alloca
+    Value *CurV = Builder->CreateLoad(Alloca->getAllocatedType(), Alloca,
+                                    VarName.c_str());
+    Value *NextV = Builder->CreateFAdd(CurV, StepV, "nextvar");
+    Builder->CreateStore(NextV, Alloca);
+
+    
     // make boolean condition just as in if,then,else
     EndCond = Builder->CreateFCmpONE(
         EndCond, ConstantFP::get(*TheContext, APFloat(0.0)), "loopcond");
 
-    // get loop block at end of loop
-    BasicBlock *LoopEndBB = Builder->GetInsertBlock();
+    // make block for after loop is complete
+    // LoopEndBB not needed since no PHI node
     BasicBlock *AfterBB = BasicBlock::Create(*TheContext, "afterloop", TheFunction);
 
     // conditionally branch back to loop or leave loop based on end condition
     Builder->CreateCondBr(EndCond, LoopBB, AfterBB);
 
+    // move to after loop complete
     Builder->SetInsertPoint(AfterBB);
-    Variable->addIncoming(NextV, LoopEndBB);
-
     // restore original var if it existed or remove loop var
     if (OldVal)
         NamedValues[VarName] = OldVal;
@@ -568,7 +656,11 @@ Function *FunctionAST::codegen() {
     // reset NamedValues so it only knows arguments and vars inside the function
     NamedValues.clear();
     for (auto &Arg : TheFunction->args()) {
-        NamedValues[std::string(Arg.getName())] = &Arg;
+        // create alloca for the arg
+        AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Arg.getName());
+        // store arg value
+        Builder->CreateStore(&Arg, Alloca);
+        NamedValues[std::string(Arg.getName())] = Alloca;
     }
 
     // generate body expression
@@ -783,6 +875,52 @@ static std::unique_ptr<ExprAST> ParseForExpr() {
     
 }
 
+static std::unique_ptr<ExprAST> ParseWithExpr() {
+    getNextToken();                         // consume 'with'
+    fprintf(stderr, "'with' consumed\n");
+
+    std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> Vars;
+    if (CurTok != tok_name) {return LogError("Expected at least one var in 'with'");}
+
+    // parse the local vars
+    fprintf(stderr, "parsing local vars\n");
+    while (true) {
+        // parse var name
+        std::string Name = IdentifierStr;
+        getNextToken();                     // consume var name
+        fprintf(stderr, "name parsed: %s\n", Name.c_str());
+
+        // initializations is optional, attempt to parse it
+        std::unique_ptr<ExprAST> Init;
+        if (CurTok == '=') {
+            getNextToken();                 // consume '='
+            Init = ParseFull();
+            if (!Init) {return nullptr;}
+        }
+        fprintf(stderr, "value parsed\n");
+        Vars.push_back(std::make_pair(Name, std::move(Init)));
+
+        if (CurTok != ',') {break;}         // list over
+        getNextToken();                     // consume ','
+
+        if (CurTok != tok_name) {return LogError("Expected another variable name after ','");}
+    }
+
+    fprintf(stderr, "parsing complete\n");
+
+    if (CurTok != ':') {return LogError("Expected ':' after 'with'");}
+    getNextToken();                         // consume ':'
+
+    fprintf(stderr, "':' parsed\n");
+
+    auto Body = ParseFull();
+    if (!Body) {return nullptr;}
+
+    fprintf(stderr, "body parsed, returning...\n");
+
+    return std::make_unique<WithExprAST>(std::move(Vars), std::move(Body));
+}
+
 static std::unique_ptr<ExprAST> ParseSimple() {
     switch (CurTok) {
         case tok_number: return ParseNumberExpr();
@@ -790,6 +928,7 @@ static std::unique_ptr<ExprAST> ParseSimple() {
         case '(': return ParseParenExpr();
         case tok_if: return ParseIfThenElseExpr();
         case tok_for: return ParseForExpr();
+        case tok_with: return ParseWithExpr();
         default: return LogError("unknown token when expecting an expression");
     }
 }
@@ -1027,9 +1166,9 @@ static void InitializeModule() {
 
 int main() {
     // Install standard binary operators.
+    BinopPrecedence['='] = 2;
     BinopPrecedence['<'] = 10;
     BinopPrecedence['>'] = 10;
-    BinopPrecedence['='] = 10;
     BinopPrecedence['+'] = 20;
     BinopPrecedence['-'] = 20;
     BinopPrecedence['*'] = 30;
