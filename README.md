@@ -48,3 +48,11 @@ I will return after the later chapters on building your own JIT.
 
 ### Chapter 5
 Implemented the lexer, AST, and parser portions without the tutorial.
+
+### Chapters 6, 7
+Continued following the tutorial and implementing parts that were familiar (such
+as lexer and AST extensions) independently before looking at the reference code.
+
+### Chapter 8
+Followed the tutorial, tested a few different functions using the variety of
+syntax implemented.
