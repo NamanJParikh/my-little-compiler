@@ -13,11 +13,9 @@ programming language.
 
 ## Registers
 
-Our simple machine will have 16 registers. R0-R13 will be general purpose
-registers usable as desired. Like in most modern architectures, R14 and R15 will
-be reserved for managing the stack. The registers will be referred to as is done
-here: Rx, where x is the register number. All general purpose registers are 
-64-bit. 
+Our simple machine will have 16 general purpose registers labelled R0 to R15. 
+The registers will be referred to as is done here: Rx, where x is the register number. 
+All general purpose registers are 64-bit. 
 
 There is an additional 2-bit register called the conditional register, referred
 to as Rc. This is used for comparisons and conditional control flow.
@@ -66,10 +64,20 @@ can be labelled. These labels can then be referenced as addresses.
 The return code for the program should be loaded into R0 before using EXIT to
 stop execution.
 
+## Comments
+
+A line can be made a comment by starting it with ```*```.
+
+## The Stack and Function Calls
+
+At this point, there is no stack. As such, there is no shorthand instruction for
+performing function calls. 
+
 ## Instructions
 
 | Instruction | Operands | Action |
 | :--- | :---: | ---: |
+| DEF | I | Defines an immediate value I at the current address |
 | Load & Store | --- | --- |
 | LI | Rx, I | Loads immediate value I into Rx |
 | LR | Rx, Ry | Loads the contents of Ry into Rx |
@@ -98,8 +106,6 @@ stop execution.
 | CMPS | Rx, Ry | Sets Rc to 00 if Rx = Ry, 01 if Rx < Ry, and 10 if Rx > Ry, signed |
 | BRU | Label | Unconditionally branches to Label |
 | BRC | Label, CC | Branches to Label if Rc = CC |
-| CALL | Fn | Calls function Fn |
-| RET | | Returns from the current function |
 | System Calls | --- | --- |
 | EXIT | | Stops program execution |
 | WRTE | Addr | Writes the text at Addr to the terminal |
