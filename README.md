@@ -55,3 +55,13 @@ as lexer and AST extensions) independently before looking at the reference code.
 ### Chapter 8
 Followed the tutorial, tested a few different functions using the variety of
 syntax implemented.
+
+## Step 2: High-Level Assembly
+
+To work more with machine code, I'll make a fairly simple but functional assembly
+language and compile it to a few architectures, as well as just a simple emulator.
+
+The main complexity here is in providing more registers than are available to 
+use freely in machine architectures. This requires emitting machine code that 
+manually manages some registers using memory rather than directly mapping to 
+hardware registers.
