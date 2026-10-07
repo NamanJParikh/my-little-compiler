@@ -43,7 +43,9 @@ Bit strings should begin with the letter ```b```.
 
 Hex strings should begin with the letter ```x```.
 
-Text strings should begin with the letter ```t```. Text is encoded in ASCII.
+Text strings should begin with the letter ```t```, followed by text enclosed in
+single apostrophes. Text is encoded in ASCII, and whitespace inside the
+apostrophes is preserved (for example, ```t'Hello world'```).
 
 ## Immediate Values
 

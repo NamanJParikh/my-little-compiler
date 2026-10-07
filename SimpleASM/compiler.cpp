@@ -211,7 +211,10 @@ class Parser {
                     break;
                 case 't':
                     immediate.type = Type::Text;
-                    immediate.textValue = payload;
+                    if (payload.size() < 2 || payload.front() != '\'' || payload.back() != '\'') {
+                        throw std::runtime_error("Text immediate must be enclosed in single quotes: " + token);
+                    }
+                    immediate.textValue = payload.substr(1, payload.size() - 2);
                     break;
                 default:
                     throw std::runtime_error("Invalid immediate prefix: " + token);
@@ -262,7 +265,12 @@ class Parser {
             std::string label;
             std::string valueText;
 
-            if (!(stream >> label >> valueText)) {
+            if (!(stream >> label)) {
+                throw std::runtime_error("Malformed .DATA entry: " + line);
+            }
+            std::getline(stream, valueText);
+            trim_(valueText);
+            if (valueText.empty()) {
                 throw std::runtime_error("Malformed .DATA entry: " + line);
             }
 
