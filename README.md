@@ -2,35 +2,34 @@
 
 ## Intro (personal, not technical)
 
-So I decided to make a compiler. This is primarily an educational project for me,
-so I make no claims as to the quality or optimization. The goals for me here are
+So I decided to make some compilers. This is primarily an educational project for 
+me, so the goal is to cover a lot of breadth and make working programs, not
+necessarily of the best quality or optimization. I have a few more specific goals.
 
 1. Get back into C++. 
-    - I haven't touched C++ in a long time. Never needed it in college outside a 
-    small Arduino project. 
-2. Bridge the gap from theory to implementation
-    - I love learning theory and I love building things, but often I find when you
-    start implementing, the theory gets swept under the rug. Theory runs deep with
-    compilers, so I'm hoping this project will give me a chance at some more
-    theory-conscious programming. Design decisions informed by an understanding 
-    of theory principles, that's how I want to build. 
-3. Learn and build in harmony with new tools
-    - I remember when I would think "I want to learn ____" and proceeded in a 
-    frenzy of Googling, collecting resources, exploring different branches, and 
-    experimenting hands-on. The goal was never to build a complete product, but 
-    somehow it ended up being pretty close to complete and certainly something 
-    to be proud of and even use. So much I see today is demos and prototypes that 
-    are great for funding rounds because AI builds for appearances. I'd like to
-    see how much I can do with AI while maintaining focus on functionality.
+    - I haven't touched C++ in a long time. Though I used C regularly through 
+    college, I never needed C++ except for a small Arduino project.
+2. Practice applying theory throughout implementation.
+    - I love learning theory and I love building things. On paper, we want to
+    extrapolate good design principles from theory and then build according to 
+    those. In both school and work, I don't always get the chance to fully reason
+    through the best design myself because things need to get done and good 
+    principles are already agreed upon.
+3. AI, of course
+    - My job is one of the more cautious with AI usage, and the platforms we work
+    on don't make using AI easy. I want to make more use of coding agents, but
+    still maintain caution and verification at every step.
+    - So much I see today is demos and prototypes that are great for funding 
+    rounds because AI builds for appearances. But they don't always function great
+    as full products. I'd like to make my own impression of best practices for
+    coding with AI, not too crazed but also not too hesitant.
 4. Open source exposure
     - I've always liked the idea of open source development and hope to contribute
-    to projects like LLVM one day. Consider this project my introduction to LLVM
-    and preparation to dig deeper into the guts of LLVM's representations and 
-    optimizations.
+    to projects like LLVM one day.
 5. Going lower level
     - I'm very interested in working more with instruction sets, programming
-    optimization, and thinking about how code actually runs on hardware. Through
-    this project, I will dig into the LLVM optimization passes and backend to
+    optimization, and thinking about how code actually runs on hardware. In
+    this project, I plan to dig into the LLVM optimization passes and backend to
     learn more about connecting high-level computing tasks to optimized instructions.
 
 ## Step 1: The LLVM Tutorial
