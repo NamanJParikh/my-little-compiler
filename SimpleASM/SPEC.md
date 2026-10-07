@@ -111,3 +111,36 @@ performing function calls.
 | System Calls | --- | --- |
 | EXIT | | Stops program execution |
 | WRTE | Addr | Writes the text at Addr to the terminal |
+
+## Technical Documentation
+
+### Parser
+
+The parser is implemented by the `Parser` class. It reads the source file one
+line at a time, ignores blank lines and lines beginning with `*`, and uses the
+`.DATA` and `.CODE` declarations to decide how to interpret subsequent lines.
+Data entries are parsed into typed immediate values. Code lines are parsed into
+instructions with an optional label and operands represented as registers,
+immediates, addresses, or strings (used for values such as condition codes).
+Invalid opcodes, malformed data entries, and invalid immediate or register
+formats produce parser errors.
+
+`DEF` in the code section is treated as a data definition rather than an
+executable instruction. Its immediate is appended to the program's data section;
+if the `DEF` line has a label, that label is attached to the new data entry.
+
+### Program Representation
+
+Parsing produces a `Program` containing:
+
+* `dataSection`: an ordered list of `DataEntry` values. Each entry has a label
+  (empty for an unlabeled `DEF`) and an `Immediate`, whose type distinguishes
+  decimal, binary, hexadecimal, and text values.
+* `codeSection`: an ordered list of `Instruction` values. Each instruction has
+  an optional label, an `Opcode`, and an ordered list of operands. An operand is
+  represented by one of `Register`, `Immediate`, `Address`, or `std::string`.
+  Addresses can hold a label or a base register with a displacement.
+* `symbolTable`: a map from labels to numeric indices. Data labels map to their
+  index in `dataSection`; code labels map to their index in `codeSection`.
+  `DEF` labels map to their data index. The map does not record which section
+  an index belongs to, so the index must be interpreted with the label's use.
