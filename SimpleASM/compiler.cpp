@@ -79,7 +79,60 @@ struct Program {
 };
 
 // ============================================================================
-// 2. Frontend / Parser
+// 2. Backend / Emitter Framework
+// ============================================================================
+
+enum class Architecture {
+    X86,
+    ARM,
+    IBMZ,
+};
+
+class Emitter {
+    public:
+        virtual ~Emitter() = default;
+        virtual std::vector<uint8_t> emit(const Program& program) const = 0;
+};
+
+class X86Emitter final : public Emitter {
+    public:
+        std::vector<uint8_t> emit(const Program& program) const override {
+            (void)program;
+            throw std::logic_error("x86 emitter is not implemented");
+        }
+};
+
+class ARMEmitter final : public Emitter {
+    public:
+        std::vector<uint8_t> emit(const Program& program) const override {
+            (void)program;
+            throw std::logic_error("ARM emitter is not implemented");
+        }
+};
+
+class IBMZEmitter final : public Emitter {
+    public:
+        std::vector<uint8_t> emit(const Program& program) const override {
+            (void)program;
+            throw std::logic_error("IBM Z emitter is not implemented");
+        }
+};
+
+std::unique_ptr<Emitter> createEmitter(Architecture architecture) {
+    switch (architecture) {
+        case Architecture::X86:
+            return std::make_unique<X86Emitter>();
+        case Architecture::ARM:
+            return std::make_unique<ARMEmitter>();
+        case Architecture::IBMZ:
+            return std::make_unique<IBMZEmitter>();
+    }
+
+    throw std::invalid_argument("Unsupported target architecture");
+}
+
+// ============================================================================
+// 3. Frontend / Parser
 // ============================================================================
 
 // Per-file parser object
