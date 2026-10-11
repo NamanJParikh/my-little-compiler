@@ -91,6 +91,10 @@ enum class Architecture {
     Python,
 };
 
+// ============================================================================
+// Python emitter code-generation helpers
+// ============================================================================
+
 static std::string registerName(Register reg);
 static std::string opcodeName(Opcode opcode);
 
@@ -371,6 +375,10 @@ static void emitPythonInstruction(std::ostream& out, const Instruction& instruct
             throw std::invalid_argument("DEF must be represented in the data section");
     }
 }
+
+// ============================================================================
+// Emitter interface and target backend classes
+// ============================================================================
 
 class Emitter {
     public:
