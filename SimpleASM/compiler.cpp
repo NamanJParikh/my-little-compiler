@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <stdexcept>
 
 // ============================================================================
@@ -86,7 +87,290 @@ enum class Architecture {
     X86,
     ARM,
     IBMZ,
+    // emulator
+    Python,
 };
+
+static std::string registerName(Register reg);
+static std::string opcodeName(Opcode opcode);
+
+static std::string pythonStringLiteral(const std::string& value) {
+    static constexpr char hexDigits[] = "0123456789abcdef";
+    std::string result = "'";
+    for (unsigned char ch : value) {
+        switch (ch) {
+            case '\\': result += "\\\\"; break;
+            case '\'': result += "\\'"; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            case '\b': result += "\\b"; break;
+            case '\f': result += "\\f"; break;
+            default:
+                if (ch < 0x20 || ch == 0x7f) {
+                    result += "\\x";
+                    result += hexDigits[ch >> 4];
+                    result += hexDigits[ch & 0x0f];
+                } else {
+                    result += static_cast<char>(ch);
+                }
+        }
+    }
+    result += '\'';
+    return result;
+}
+
+static const Operand& pythonOperandAt(const Instruction& instruction, std::size_t index) {
+    if (index >= instruction.operands.size()) {
+        throw std::invalid_argument(opcodeName(instruction.opcode) + " has too few operands");
+    }
+    return instruction.operands[index];
+}
+
+static void requirePythonOperandCount(const Instruction& instruction, std::size_t count) {
+    if (instruction.operands.size() != count) {
+        throw std::invalid_argument(opcodeName(instruction.opcode) + " requires " +
+                                    std::to_string(count) + " operands");
+    }
+}
+
+static Register pythonRegisterOperand(const Instruction& instruction, std::size_t index) {
+    const auto* reg = std::get_if<Register>(&pythonOperandAt(instruction, index));
+    if (!reg) {
+        throw std::invalid_argument(opcodeName(instruction.opcode) + " operand " +
+                                    std::to_string(index + 1) + " must be a register");
+    }
+    return *reg;
+}
+
+static int64_t pythonImmediateOperand(const Instruction& instruction, std::size_t index) {
+    const auto* immediate = std::get_if<Immediate>(&pythonOperandAt(instruction, index));
+    if (!immediate || immediate->type == Type::Text) {
+        throw std::invalid_argument(opcodeName(instruction.opcode) + " operand " +
+                                    std::to_string(index + 1) + " must be a numeric immediate");
+    }
+    return immediate->numericalValue;
+}
+
+static std::string pythonRegisterExpression(Register reg) {
+    return "registers[" + std::to_string(static_cast<int>(reg)) + "]";
+}
+
+static std::string pythonAddressExpression(const Instruction& instruction, std::size_t index,
+                                           const std::map<std::string, uint64_t>& dataLabels) {
+    const auto* address = std::get_if<Address>(&pythonOperandAt(instruction, index));
+    if (!address || (!address->label && !address->baseRegister)) {
+        throw std::invalid_argument(opcodeName(instruction.opcode) + " operand " +
+                                    std::to_string(index + 1) + " must be an address");
+    }
+
+    std::ostringstream expression;
+    expression << "address_of(";
+    if (address->label) {
+        if (dataLabels.find(*address->label) == dataLabels.end()) {
+            throw std::invalid_argument("Unknown data label in address: " + *address->label);
+        }
+        expression << pythonStringLiteral(*address->label) << ", None";
+    } else {
+        expression << "None, " << static_cast<int>(*address->baseRegister);
+    }
+    expression << ", " << address->displacement << ", registers, data_labels)";
+    return expression.str();
+}
+
+static std::string pythonBranchLabel(const Instruction& instruction, std::size_t index,
+                                     const std::map<std::string, std::size_t>& codeLabels) {
+    const Operand& operand = pythonOperandAt(instruction, index);
+    std::string label;
+    if (const auto* address = std::get_if<Address>(&operand); address && address->label) {
+        label = *address->label;
+    } else if (const auto* value = std::get_if<std::string>(&operand)) {
+        label = *value;
+    } else {
+        throw std::invalid_argument(opcodeName(instruction.opcode) + " operand " +
+                                    std::to_string(index + 1) + " must be a code label");
+    }
+    if (codeLabels.find(label) == codeLabels.end()) {
+        throw std::invalid_argument("Unknown code label: " + label);
+    }
+    return label;
+}
+
+static void emitPythonInstruction(std::ostream& out, const Instruction& instruction, std::size_t index,
+                                  const std::map<std::string, std::size_t>& codeLabels,
+                                  const std::map<std::string, uint64_t>& dataLabels) {
+    auto regExpr = [&](std::size_t operandIndex) {
+        return pythonRegisterExpression(pythonRegisterOperand(instruction, operandIndex));
+    };
+    auto setReg = [&](std::size_t operandIndex, const std::string& value) {
+        const Register reg = pythonRegisterOperand(instruction, operandIndex);
+        out << "            set_register(registers, " << static_cast<int>(reg) << ", " << value << ")\n";
+    };
+    auto addressExpr = [&](std::size_t operandIndex) {
+        return pythonAddressExpression(instruction, operandIndex, dataLabels);
+    };
+    auto emitNext = [&]() {
+        out << "            pc += 1\n";
+    };
+    auto emitBinary = [&](const char* operation, bool signedOperands = false) {
+        requirePythonOperandCount(instruction, 2);
+        const std::string left = regExpr(0);
+        const std::string right = regExpr(1);
+        const std::string lhs = signedOperands ? "signed64(" + left + ")" : left;
+        const std::string rhs = signedOperands ? "signed64(" + right + ")" : right;
+        setReg(0, lhs + " " + operation + " " + rhs);
+        emitNext();
+    };
+
+    out << "        " << (index == 0 ? "if" : "elif") << " pc == " << index << ":\n";
+    switch (instruction.opcode) {
+        case Opcode::LI:
+            requirePythonOperandCount(instruction, 2);
+            if (const auto* immediate = std::get_if<Immediate>(&pythonOperandAt(instruction, 1));
+                immediate && immediate->type != Type::Text) {
+                setReg(0, std::to_string(immediate->numericalValue));
+            } else {
+                throw std::invalid_argument("LI operand 2 must be a numeric immediate");
+            }
+            emitNext();
+            break;
+        case Opcode::LR:
+            requirePythonOperandCount(instruction, 2);
+            setReg(0, regExpr(1));
+            emitNext();
+            break;
+        case Opcode::LA:
+            requirePythonOperandCount(instruction, 2);
+            setReg(0, addressExpr(1));
+            emitNext();
+            break;
+        case Opcode::LMU:
+        case Opcode::LMS: {
+            requirePythonOperandCount(instruction, 3);
+            const int64_t size = pythonImmediateOperand(instruction, 2);
+            if (size < 1 || size > 8) {
+                throw std::invalid_argument(opcodeName(instruction.opcode) + " size must be between 1 and 8 bytes");
+            }
+            const std::string read = "read_memory(memory, " + addressExpr(1) + ", " +
+                                    std::to_string(size) + ", " +
+                                    (instruction.opcode == Opcode::LMS ? "True" : "False") + ")";
+            setReg(0, read);
+            emitNext();
+            break;
+        }
+        case Opcode::ST: {
+            requirePythonOperandCount(instruction, 3);
+            const int64_t size = pythonImmediateOperand(instruction, 2);
+            if (size < 1 || size > 8) {
+                throw std::invalid_argument("ST size must be between 1 and 8 bytes");
+            }
+            out << "            write_memory(memory, " << addressExpr(1) << ", " << regExpr(0)
+                << ", " << size << ")\n";
+            emitNext();
+            break;
+        }
+        case Opcode::AND: emitBinary("&"); break;
+        case Opcode::OR: emitBinary("|"); break;
+        case Opcode::XOR: emitBinary("^"); break;
+        case Opcode::ADD: emitBinary("+"); break;
+        case Opcode::SUB: emitBinary("-"); break;
+        case Opcode::MUL: emitBinary("*"); break;
+        case Opcode::MULS: emitBinary("*", true); break;
+        case Opcode::DIV:
+        case Opcode::DIVS: {
+            requirePythonOperandCount(instruction, 2);
+            const std::string lhs = regExpr(0);
+            const std::string rhs = regExpr(1);
+            if (instruction.opcode == Opcode::DIV) {
+                setReg(0, lhs + " // " + rhs);
+            } else {
+                setReg(0, "signed_divide(" + lhs + ", " + rhs + ")");
+            }
+            emitNext();
+            break;
+        }
+        case Opcode::ADDI:
+        case Opcode::SUBI: {
+            requirePythonOperandCount(instruction, 2);
+            const int64_t immediate = pythonImmediateOperand(instruction, 1);
+            setReg(0, regExpr(0) + (instruction.opcode == Opcode::ADDI ? " + " : " - ") +
+                      std::to_string(immediate));
+            emitNext();
+            break;
+        }
+        case Opcode::LSH:
+        case Opcode::RSH:
+        case Opcode::RSHS: {
+            requirePythonOperandCount(instruction, 2);
+            const int64_t shift = pythonImmediateOperand(instruction, 1);
+            if (shift < 0 || shift > 63) {
+                throw std::invalid_argument(opcodeName(instruction.opcode) + " shift must be between 0 and 63");
+            }
+            const std::string value = regExpr(0);
+            std::string shifted = value + (instruction.opcode == Opcode::LSH ? " << " : " >> ") +
+                                  std::to_string(shift);
+            if (instruction.opcode == Opcode::RSHS) {
+                shifted = "signed64(" + value + ") >> " + std::to_string(shift);
+            }
+            setReg(0, shifted);
+            emitNext();
+            break;
+        }
+        case Opcode::CMP:
+        case Opcode::CMPS: {
+            requirePythonOperandCount(instruction, 2);
+            const std::string left = regExpr(0);
+            const std::string right = regExpr(1);
+            const std::string lhs = instruction.opcode == Opcode::CMPS ? "signed64(" + left + ")" : left;
+            const std::string rhs = instruction.opcode == Opcode::CMPS ? "signed64(" + right + ")" : right;
+            out << "            registers[16] = 0 if " << lhs << " == " << rhs
+                << " else (1 if " << lhs << " < " << rhs << " else 2)\n";
+            emitNext();
+            break;
+        }
+        case Opcode::BRU: {
+            requirePythonOperandCount(instruction, 1);
+            const std::string label = pythonBranchLabel(instruction, 0, codeLabels);
+            out << "            pc = code_labels[" << pythonStringLiteral(label) << "]\n";
+            break;
+        }
+        case Opcode::BRC: {
+            requirePythonOperandCount(instruction, 2);
+            const std::string label = pythonBranchLabel(instruction, 0, codeLabels);
+            const Operand& conditionOperand = pythonOperandAt(instruction, 1);
+            std::string condition;
+            if (const auto* value = std::get_if<std::string>(&conditionOperand)) {
+                if (value->size() != 2 ||
+                    !std::all_of(value->begin(), value->end(), [](char ch) { return ch == '0' || ch == '1'; })) {
+                    throw std::invalid_argument("BRC condition must be a 2-bit condition code");
+                }
+                condition = "int(" + pythonStringLiteral(*value) + ", 2)";
+            } else if (const auto* immediate = std::get_if<Immediate>(&conditionOperand);
+                       immediate && immediate->type != Type::Text &&
+                       immediate->numericalValue >= 0 && immediate->numericalValue <= 3) {
+                condition = std::to_string(immediate->numericalValue);
+            } else {
+                throw std::invalid_argument("BRC condition must be a 2-bit condition code");
+            }
+            out << "            if registers[16] == " << condition << ":\n"
+                << "                pc = code_labels[" << pythonStringLiteral(label) << "]\n"
+                << "            else:\n"
+                << "                pc += 1\n";
+            break;
+        }
+        case Opcode::WRTE:
+            requirePythonOperandCount(instruction, 1);
+            out << "            write_text(memory, " << addressExpr(0) << ")\n";
+            emitNext();
+            break;
+        case Opcode::EXIT:
+            requirePythonOperandCount(instruction, 0);
+            out << "            break\n";
+            break;
+        case Opcode::DEF:
+            throw std::invalid_argument("DEF must be represented in the data section");
+    }
+}
 
 class Emitter {
     public:
@@ -118,6 +402,124 @@ class IBMZEmitter final : public Emitter {
         }
 };
 
+class PythonEmitter final : public Emitter {
+    public:
+        std::vector<uint8_t> emit(const Program& program) const override {
+            std::vector<uint8_t> memory;
+            std::map<std::string, uint64_t> dataLabels;
+            for (const auto& entry : program.dataSection) {
+                if (!entry.label.empty()) {
+                    dataLabels[entry.label] = memory.size();
+                }
+                if (entry.value.type == Type::Text) {
+                    for (unsigned char byte : entry.value.textValue) {
+                        memory.push_back(byte);
+                    }
+                    memory.push_back(0);
+                } else {
+                    const uint64_t value = static_cast<uint64_t>(entry.value.numericalValue);
+                    for (int byte = 0; byte < 8; ++byte) {
+                        memory.push_back(static_cast<uint8_t>(value >> (byte * 8)));
+                    }
+                }
+            }
+
+            std::map<std::string, std::size_t> codeLabels;
+            for (std::size_t index = 0; index < program.codeSection.size(); ++index) {
+                if (program.codeSection[index].label) {
+                    codeLabels[*program.codeSection[index].label] = index;
+                }
+            }
+
+            std::ostringstream script;
+            script << "#!/usr/bin/env python3\n"
+                      "\"\"\"Generated Python emulator for a SimpleASM program.\"\"\"\n"
+                      "import sys\n\n"
+                      "MASK64 = (1 << 64) - 1\n\n"
+                      "def signed64(value):\n"
+                      "    value &= MASK64\n"
+                      "    return value - (1 << 64) if value & (1 << 63) else value\n\n"
+                      "def set_register(registers, index, value):\n"
+                      "    registers[index] = value & (3 if index == 16 else MASK64)\n\n"
+                      "def signed_divide(left, right):\n"
+                      "    left, right = signed64(left), signed64(right)\n"
+                      "    if right == 0:\n"
+                      "        raise ZeroDivisionError('SimpleASM signed division by zero')\n"
+                      "    quotient = abs(left) // abs(right)\n"
+                      "    return -quotient if (left < 0) != (right < 0) else quotient\n\n"
+                      "def address_of(label, base_register, displacement, registers, data_labels):\n"
+                      "    if label is not None:\n"
+                      "        return data_labels[label] + displacement\n"
+                      "    return registers[base_register] + displacement\n\n"
+                      "def check_memory_range(memory, address, size):\n"
+                      "    if address < 0 or size < 0 or address + size > len(memory):\n"
+                      "        raise IndexError('SimpleASM memory access out of bounds')\n\n"
+                      "def read_memory(memory, address, size, signed=False):\n"
+                      "    check_memory_range(memory, address, size)\n"
+                      "    return int.from_bytes(memory[address:address + size], 'little', signed=signed)\n\n"
+                      "def write_memory(memory, address, value, size):\n"
+                      "    check_memory_range(memory, address, size)\n"
+                      "    mask = (1 << (size * 8)) - 1\n"
+                      "    memory[address:address + size] = (value & mask).to_bytes(size, 'little')\n\n"
+                      "def write_text(memory, address):\n"
+                      "    if address < 0 or address > len(memory):\n"
+                      "        raise IndexError('SimpleASM text address out of bounds')\n"
+                      "    end = memory.find(b'\\0', address)\n"
+                      "    if end < 0:\n"
+                      "        end = len(memory)\n"
+                      "    sys.stdout.write(bytes(memory[address:end]).decode('ascii'))\n\n"
+                      "def main():\n"
+                      "    registers = [0] * 17\n"
+                      "    memory = bytearray([";
+            for (std::size_t i = 0; i < memory.size(); ++i) {
+                if (i != 0) {
+                    script << ", ";
+                }
+                script << static_cast<unsigned int>(memory[i]);
+            }
+            script << "])\n"
+                      "    data_labels = {\n";
+            for (const auto& label : dataLabels) {
+                script << "        " << pythonStringLiteral(label.first) << ": " << label.second << ",\n";
+            }
+            script << "    }\n"
+                      "    code_labels = {\n";
+            for (const auto& label : codeLabels) {
+                script << "        " << pythonStringLiteral(label.first) << ": " << label.second << ",\n";
+            }
+            script << "    }\n"
+                      "    pc = 0\n"
+                      "    while 0 <= pc < " << program.codeSection.size() << ":\n";
+            if (program.codeSection.empty()) {
+                script << "        break\n";
+            } else {
+                for (std::size_t index = 0; index < program.codeSection.size(); ++index) {
+                    emitPythonInstruction(script, program.codeSection[index], index, codeLabels, dataLabels);
+                }
+                script << "        else:\n"
+                          "            raise RuntimeError('Invalid SimpleASM program counter: {}'.format(pc))\n";
+            }
+            script << "    print()\n"
+                      "    print('Return code (R0): {}'.format(registers[0]))\n"
+                      "    print('Final register values:')\n"
+                      "    for register_index in range(16):\n"
+                      "        print('  R{}: {}'.format(register_index, registers[register_index]))\n"
+                      "    print('  Rc: {}'.format(registers[16]))\n"
+                      "    print('Storage contents (hex): {}'.format(memory.hex()))\n"
+                      "    return registers[0] & 0xff\n\n"
+                      "if __name__ == '__main__':\n"
+                      "    sys.exit(main())\n";
+
+            const std::string output = script.str();
+            std::vector<uint8_t> bytes;
+            bytes.reserve(output.size());
+            for (unsigned char byte : output) {
+                bytes.push_back(byte);
+            }
+            return bytes;
+        }
+};
+
 std::unique_ptr<Emitter> createEmitter(Architecture architecture) {
     switch (architecture) {
         case Architecture::X86:
@@ -126,6 +528,8 @@ std::unique_ptr<Emitter> createEmitter(Architecture architecture) {
             return std::make_unique<ARMEmitter>();
         case Architecture::IBMZ:
             return std::make_unique<IBMZEmitter>();
+        case Architecture::Python:
+            return std::make_unique<PythonEmitter>();
     }
 
     throw std::invalid_argument("Unsupported target architecture");
@@ -495,18 +899,133 @@ static void printProgram(const Program& program, std::ostream& out) {
     }
 }
 
+static std::optional<Architecture> parseArchitecture_(const std::string& value) {
+    if (value == "x86" || value == "X86") {
+        return Architecture::X86;
+    }
+    if (value == "arm" || value == "ARM") {
+        return Architecture::ARM;
+    }
+    if (value == "ibmz" || value == "IBMZ") {
+        return Architecture::IBMZ;
+    }
+    if (value == "python" || value == "Python") {
+        return Architecture::Python;
+    }
+    return std::nullopt;
+}
+
+static void printUsage_(const char* argv0) {
+    std::cerr << "Usage: " << argv0 << " [--emit <target>] [-o <output_file>] <source_file.s>\n"
+              << "Targets: print, x86, arm, ibmz, python\n";
+}
+
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <source_file.s>\n";
+    std::optional<Architecture> target;
+    std::string sourceFile;
+    std::string outputFile;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            printUsage_(argv[0]);
+            return 0;
+        }
+        if (arg == "--emit" || arg == "-e") {
+            if (i + 1 >= argc) {
+                printUsage_(argv[0]);
+                return 1;
+            }
+            const std::string next = argv[++i];
+            if (next == "print") {
+                target = std::nullopt;
+                continue;
+            }
+            const auto parsedTarget = parseArchitecture_(next);
+            if (!parsedTarget.has_value()) {
+                std::cerr << "Unsupported target: " << next << '\n';
+                printUsage_(argv[0]);
+                return 1;
+            }
+            target = parsedTarget;
+            continue;
+        }
+        if (arg == "--output" || arg == "-o") {
+            if (i + 1 >= argc) {
+                printUsage_(argv[0]);
+                return 1;
+            }
+            outputFile = argv[++i];
+            continue;
+        }
+        if (arg.rfind("--emit=", 0) == 0) {
+            const std::string next = arg.substr(7);
+            if (next == "print") {
+                target = std::nullopt;
+                continue;
+            }
+            const auto parsedTarget = parseArchitecture_(next);
+            if (!parsedTarget.has_value()) {
+                std::cerr << "Unsupported target: " << next << '\n';
+                printUsage_(argv[0]);
+                return 1;
+            }
+            target = parsedTarget;
+            continue;
+        }
+        if (sourceFile.empty()) {
+            sourceFile = arg;
+            continue;
+        }
+
+        std::cerr << "Unexpected argument: " << arg << '\n';
+        printUsage_(argv[0]);
+        return 1;
+    }
+
+    if (sourceFile.empty()) {
+        printUsage_(argv[0]);
+        return 1;
+    }
+    if (!outputFile.empty() && (!target.has_value() || *target != Architecture::Python)) {
+        std::cerr << "--output is only supported with --emit python\n";
         return 1;
     }
 
     try {
-        Parser parser(argv[1]);
+        Parser parser(sourceFile);
         const Program program = parser.parse();
+
+        if (target.has_value()) {
+            const auto emitter = createEmitter(*target);
+            const auto output = emitter->emit(program);
+            if (*target == Architecture::Python) {
+                std::filesystem::path outputPath = outputFile.empty()
+                    ? std::filesystem::path(sourceFile).replace_extension(".py")
+                    : std::filesystem::path(outputFile);
+                if (std::filesystem::absolute(outputPath).lexically_normal() ==
+                    std::filesystem::absolute(sourceFile).lexically_normal()) {
+                    throw std::runtime_error("Output file must not overwrite the source file");
+                }
+
+                std::ofstream file(outputPath, std::ios::binary);
+                if (!file.is_open()) {
+                    throw std::runtime_error("Could not open output file: " + outputPath.string());
+                }
+                file.write(reinterpret_cast<const char*>(output.data()),
+                           static_cast<std::streamsize>(output.size()));
+                if (!file) {
+                    throw std::runtime_error("Could not write output file: " + outputPath.string());
+                }
+            }
+            std::cout.write(reinterpret_cast<const char*>(output.data()),
+                            static_cast<std::streamsize>(output.size()));
+            return 0;
+        }
+
         printProgram(program, std::cout);
     } catch (const std::exception& error) {
-        std::cerr << "Parser error: " << error.what() << '\n';
+        std::cerr << "Compiler error: " << error.what() << '\n';
         return 1;
     }
 

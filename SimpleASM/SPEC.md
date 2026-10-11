@@ -144,3 +144,21 @@ Parsing produces a `Program` containing:
   index in `dataSection`; code labels map to their index in `codeSection`.
   `DEF` labels map to their data index. The map does not record which section
   an index belongs to, so the index must be interpreted with the label's use.
+
+### Python Emitter
+
+The Python target emits runnable Python code for each SimpleASM instruction.
+Its emulator uses 64-bit registers, a 2-bit condition register, and
+little-endian byte-addressed memory. Numeric data entries occupy eight bytes;
+text entries are ASCII bytes terminated by a zero byte. Loads, stores, and
+text output use those memory addresses. Signed arithmetic and comparisons use
+two's-complement register values, and arithmetic results wrap to 64 bits.
+`LI` accepts only numeric immediates, and `LR` accepts only a source register;
+use `LA` to load an address or `LMU`/`LMS` to load data from memory. After
+execution, the generated script prints the return code in `R0`, the values of
+`R0` through `R15` and `Rc`, and the complete storage contents as hexadecimal
+bytes. The process exit status is the low byte of `R0`.
+
+Use `--emit python` to print the generated script and write it beside the
+source file with a `.py` extension. The output path can be overridden with
+`-o` or `--output`.
