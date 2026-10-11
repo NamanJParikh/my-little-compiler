@@ -152,9 +152,7 @@ Its emulator uses 64-bit registers, a 2-bit condition register, and
 little-endian byte-addressed memory. Numeric data entries occupy eight bytes;
 text entries are ASCII bytes terminated by a zero byte. Loads, stores, and
 text output use those memory addresses. Signed arithmetic and comparisons use
-two's-complement register values, and arithmetic results wrap to 64 bits.
-`LI` accepts only numeric immediates, and `LR` accepts only a source register;
-use `LA` to load an address or `LMU`/`LMS` to load data from memory. After
+two's-complement register values, and arithmetic results wrap to 64 bits. After
 execution, the generated script prints the return code in `R0`, the values of
 `R0` through `R15` and `Rc`, and the complete storage contents as hexadecimal
 bytes. The process exit status is the low byte of `R0`.
