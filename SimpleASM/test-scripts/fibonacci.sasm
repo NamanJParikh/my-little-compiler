@@ -1,0 +1,27 @@
+* Fibonacci numbers calculator
+
+********************************************************************************
+.DATA
+********************************************************************************
+
+********************************************************************************
+.CODE
+********************************************************************************
+* Calculate Fibonacci(N) with Fibonacci(0) = 0 and Fibonacci(1) = 1.
+* R0 is the previous term, R1 the current term, and R2 counts down from N.
+START   LI      R0, d0
+        LI      R1, d1
+        LI      R2, d17
+        LI      R3, d1
+
+FIBLOOP CMP     R2, R3
+        BRC     FIBDONE, 00
+        LR      R4, R0
+        ADD     R4, R1
+        LR      R0, R1
+        LR      R1, R4
+        SUBI    R2, d1
+        BRU     FIBLOOP
+
+FIBDONE LR      R0, R1
+        EXIT
