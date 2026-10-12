@@ -160,3 +160,25 @@ bytes. The process exit status is the low byte of `R0`.
 Use `--emit python` to print the generated script and write it beside the
 source file with a `.py` extension. The output path can be overridden with
 `-o` or `--output`.
+
+### x86-64 Emitter
+
+The x86 target emits a native Linux ELF64 executable using direct x86-64 machine
+code. It uses separate read/execute code and read/write data load segments.
+Numeric data entries occupy eight little-endian bytes; text entries are ASCII
+bytes terminated by zero. Code labels are resolved to instruction addresses,
+and data-label references use RIP-relative addressing with displacements
+measured from the end of each x86 instruction.
+
+The initial implementation maps SimpleASM R0-R7 to x86-64 registers and rejects
+programs that use R8-R15. The writable data segment reserves zero-initialized
+backing slots for those additional registers for a later memory-backed mapping.
+Runtime condition state is stored separately from x86 flags so that `Rc`
+persists between instructions. `WRTE` writes a NUL-terminated string to standard
+output using Linux system calls. `EXIT`, and falling off the end of `.CODE`,
+terminate with the low byte of R0 as the process status.
+
+Use `--emit x86` to write an executable beside the source file with a `.out`
+extension. Use `-o` or `--output` to select another output path. The generated
+executable is for 64-bit x86 Linux systems; it is not runnable natively on
+macOS or Windows.
