@@ -1814,6 +1814,8 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Wrote x86-64 Linux executable: " << outputPath.string() << '\n';
                     return 0;
                 }
+                std::cerr << "Wrote Python emulator: " << outputPath.string() << '\n';
+                return 0;
             }
             std::cout.write(reinterpret_cast<const char*>(output.data()),
                             static_cast<std::streamsize>(output.size()));

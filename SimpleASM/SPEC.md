@@ -157,9 +157,8 @@ execution, the generated script prints the return code in `R0`, the values of
 `R0` through `R15` and `Rc`, and the complete storage contents as hexadecimal
 bytes. The process exit status is the low byte of `R0`.
 
-Use `--emit python` to print the generated script and write it beside the
-source file with a `.py` extension. The output path can be overridden with
-`-o` or `--output`.
+Use `--emit python` to write the generated script beside the source file with
+a `.py` extension. The output path can be overridden with `-o` or `--output`.
 
 ### x86-64 Emitter
 
