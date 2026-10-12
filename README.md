@@ -32,10 +32,11 @@ necessarily of the best quality or optimization. I have a few more specific goal
     this project, I plan to dig into the LLVM optimization passes and backend to
     learn more about connecting high-level computing tasks to optimized instructions.
 
-## Step 1: The LLVM Tutorial
+## Part 1: The LLVM Tutorial
 
 The LLVM tutorial creates a compiler for the toy language Kaleidoscope, and my
-following of it can be found in ```./kaleidoscope```.
+following of it can be found in ```./kaleidoscope```. Since this is a tutorial
+with reference code, I won't use AI for this section.
 
 ### Chapters 1, 2, 3
 Largely followed the tutorial but skipping extern. Tbh because I just don't care 
@@ -56,12 +57,49 @@ as lexer and AST extensions) independently before looking at the reference code.
 Followed the tutorial, tested a few different functions using the variety of
 syntax implemented.
 
-## Step 2: High-Level Assembly
+## Part 2: Simple Assembly
 
 To work more with machine code, I'll make a fairly simple but functional assembly
-language and compile it to a few architectures, as well as just a simple emulator.
+language and compile it to a few architectures, as well as just a simple Python
+emulator.
 
 The main complexity here is in providing more registers than are available to 
 use freely in machine architectures. This requires emitting machine code that 
 manually manages some registers using memory rather than directly mapping to 
 hardware registers.
+
+To be honest, I'm not sure there's any value to this assembly language beyond
+being educational. The point of writing code in assembly is to take full advantage
+of the specific hardware details, so abstracting away the specific architecture 
+makes it a futile exercise. But there's a lot to learn here and I'm not too 
+concerned at this stage about the scheduling and allocation problems of a full 
+IR backend.
+
+### Parsing
+
+The parser is quite straightforward because of how simple the language is. I
+started using Copilot and Claude to help speed along the more tedious 
+implementation like having to handle each individual instruction and also to 
+quickly write entry points for testing.
+
+### Python emulator
+
+The purpose of this is mostly just to work through the process of an emitter
+while producing an easily readable and runnable result. 
+
+### x86 Emitter
+
+This is the first really significant chunk of this part. I got some good experience
+working out design decisions and details as part of the process of implementing
+it with AI and forcing it to go step by step and verify each step. There's a lot
+of debugging and verification that still had to be done, but it certainly made
+the process a lot faster. I found a good balance of the size of each step so that
+I've moved through it quickly but the chunks of AI generated code are still a 
+reviewable and editable size. This made verifying the code and debugging the bugs 
+I did find a pleasant process.
+
+I also had to relearn a bunch about x86 and learn more about executable formats
+and how to format machine code instructions and emit them. The LLVM backend code
+was very useful to review for getting comfortable with the idea of producing
+a raw executable and understanding how to handle issues like instruction encoding
+and addressing.
