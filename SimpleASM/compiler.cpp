@@ -1466,6 +1466,23 @@ class Parser {
         static Address parseAddress_(const std::string& token) {
             Address addr;
 
+            auto parseDisplacement = [&](const std::string& expression, std::size_t opPos) {
+                std::string valueText = expression.substr(opPos + 1);
+                trim_(valueText);
+                const Immediate immediate = parseImmediate_(valueText);
+                if (immediate.type == Type::Text) {
+                    throw std::runtime_error("Address displacement must be numeric: " + token);
+                }
+                if (expression[opPos] == '-') {
+                    if (immediate.numericalValue == INT64_MIN) {
+                        throw std::runtime_error("Address displacement is out of range: " + token);
+                    }
+                    addr.displacement = -immediate.numericalValue;
+                } else {
+                    addr.displacement = immediate.numericalValue;
+                }
+            };
+
             if (token.size() >= 3 && token.front() == '[' && token.back() == ']') {
                 std::string inner = token.substr(1, token.size() - 2);
                 trim_(inner);
@@ -1475,25 +1492,18 @@ class Parser {
                 addr.baseRegister = parseRegister_(regText);
 
                 if (opPos != std::string::npos) {
-                    std::string valueText = inner.substr(opPos + 1);
-                    trim_(valueText);
-                    const Immediate immediate = parseImmediate_(valueText);
-                    if (immediate.type == Type::Text) {
-                        throw std::runtime_error("Address displacement must be numeric: " + token);
-                    }
-                    if (inner[opPos] == '-') {
-                        if (immediate.numericalValue == INT64_MIN) {
-                            throw std::runtime_error("Address displacement is out of range: " + token);
-                        }
-                        addr.displacement = -immediate.numericalValue;
-                    } else {
-                        addr.displacement = immediate.numericalValue;
-                    }
+                    parseDisplacement(inner, opPos);
                 }
                 return addr;
             }
 
-            addr.label = token;
+            const std::size_t opPos = token.find_first_of("+-");
+            std::string label = token.substr(0, opPos);
+            trim_(label);
+            addr.label = label;
+            if (opPos != std::string::npos) {
+                parseDisplacement(token, opPos);
+            }
             return addr;
         }
 
@@ -1545,18 +1555,15 @@ class Parser {
                     continue;
                 }
 
-                if (operandText[0] == 'R' || operandText == "Rc") {
+                if (operandText == "Rc" ||
+                    (operandText.size() > 1 && operandText[0] == 'R' &&
+                     std::all_of(operandText.begin() + 1, operandText.end(), [](unsigned char ch) {
+                         return std::isdigit(ch);
+                     }))) {
                     inst.operands.push_back(parseRegister_(operandText));
                 // ^ ... surely there is a cleaner way to do this
-                } else if (operandText[0] == '[' || operandText[0] == 'A' || operandText[0] == 'B' ||
-                           operandText[0] == 'C' || operandText[0] == 'D' || operandText[0] == 'E' ||
-                           operandText[0] == 'F' || operandText[0] == 'G' || operandText[0] == 'H' ||
-                           operandText[0] == 'I' || operandText[0] == 'J' || operandText[0] == 'K' ||
-                           operandText[0] == 'L' || operandText[0] == 'M' || operandText[0] == 'N' ||
-                           operandText[0] == 'O' || operandText[0] == 'P' || operandText[0] == 'Q' ||
-                           operandText[0] == 'S' || operandText[0] == 'T' || operandText[0] == 'U' ||
-                           operandText[0] == 'V' || operandText[0] == 'W' || operandText[0] == 'X' ||
-                           operandText[0] == 'Y' || operandText[0] == 'Z') {
+                } else if (operandText[0] == '[' ||
+                           std::isupper(static_cast<unsigned char>(operandText[0]))) {
                     inst.operands.push_back(parseAddress_(operandText));
                 } else if (operandText[0] == 'd' || operandText[0] == 'b' || operandText[0] == 'x' || operandText[0] == 't') {
                     inst.operands.push_back(parseImmediate_(operandText));
@@ -1637,12 +1644,17 @@ static void printOperand(std::ostream& out, const Operand& operand) {
     } else if (const auto* address = std::get_if<Address>(&operand)) {
         if (address->label) {
             out << *address->label;
+            if (address->displacement > 0) {
+                out << " + " << address->displacement;
+            } else if (address->displacement < 0) {
+                out << " - " << static_cast<uint64_t>(-(address->displacement + 1)) + 1;
+            }
         } else if (address->baseRegister) {
             out << "[" << registerName(*address->baseRegister);
             if (address->displacement > 0) {
                 out << " + " << address->displacement;
             } else if (address->displacement < 0) {
-                out << " - " << -address->displacement;
+                out << " - " << static_cast<uint64_t>(-(address->displacement + 1)) + 1;
             }
             out << "]";
         } else {
