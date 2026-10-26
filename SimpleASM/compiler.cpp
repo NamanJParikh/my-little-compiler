@@ -1346,6 +1346,8 @@ class Parser {
                     continue;
                 }
 
+                // ^ is there sufficient error checking here for a badly formatted input program?
+
                 if (currLine == ".DATA") {
                     inData = true;
                     inCode = false;
@@ -1377,6 +1379,7 @@ class Parser {
             return tokens;
         }
 
+        // ^ it's not terrible but can we not combine this with stringToOpcode_?
         static bool isOpcode_(const std::string& text) {
             static const std::map<std::string, Opcode> opcodes = {
                 {"DEF", Opcode::DEF}, {"LI", Opcode::LI}, {"LR", Opcode::LR}, {"LA", Opcode::LA},
@@ -1449,6 +1452,7 @@ class Parser {
             }
 
             if (regStr.size() > 1 && regStr[0] == 'R') {
+                // ^ std::stoi needs error checking
                 const int regNum = std::stoi(regStr.substr(1));
                 if (regNum >= 0 && regNum <= 15) {
                     return static_cast<Register>(regNum);
@@ -1466,6 +1470,7 @@ class Parser {
                 std::stringstream ss(inner);
                 std::string regText;
                 if (ss >> regText) {
+                    // ^ I'd like to allow displacement from a label as well here 
                     addr.baseRegister = parseRegister_(regText);
                     std::string op;
                     std::string valueText;
@@ -1507,6 +1512,7 @@ class Parser {
                 throw std::runtime_error("Malformed .DATA entry: " + line);
             }
 
+            // ^ are we error handling duplicate labels appropriately ?
             DataEntry entry;
             entry.label = label;
             entry.value = parseImmediate_(valueText);
@@ -1542,6 +1548,7 @@ class Parser {
 
                 if (operandText[0] == 'R' || operandText == "Rc") {
                     inst.operands.push_back(parseRegister_(operandText));
+                // ^ ... surely there is a cleaner way to do this
                 } else if (operandText[0] == '[' || operandText[0] == 'A' || operandText[0] == 'B' ||
                            operandText[0] == 'C' || operandText[0] == 'D' || operandText[0] == 'E' ||
                            operandText[0] == 'F' || operandText[0] == 'G' || operandText[0] == 'H' ||
@@ -1566,6 +1573,8 @@ class Parser {
 
                 const std::string label = inst.label.value_or("");
                 program.dataSection.push_back({label, std::get<Immediate>(inst.operands[0])});
+                // ^ I guess this is fine. surely there should never be a def without a label in
+                // ^ a correct program
                 if (!label.empty()) {
                     program.symbolTable[label] = program.dataSection.size() - 1;
                 }
@@ -1776,8 +1785,10 @@ int main(int argc, char* argv[]) {
         if (target.has_value()) {
             const auto emitter = createEmitter(*target);
             const auto output = emitter->emit(program);
+            // ^ this is a temporary check, right? will be removed after full implementation
             if (*target == Architecture::Python || *target == Architecture::X86) {
                 std::filesystem::path defaultOutputPath(sourceFile);
+                // ^ this won't generalize well to adding more architectures, should probably just case it
                 defaultOutputPath.replace_extension(*target == Architecture::Python ? ".py" : ".out");
                 const std::filesystem::path outputPath = outputFile.empty()
                     ? defaultOutputPath : std::filesystem::path(outputFile);
@@ -1799,6 +1810,7 @@ int main(int argc, char* argv[]) {
                 if (!file) {
                     throw std::runtime_error("Could not close output file: " + outputPath.string());
                 }
+                // ^ again would make this a case for full implementation
                 if (*target == Architecture::X86) {
                     std::error_code permissionError;
                     std::filesystem::permissions(outputPath,
@@ -1822,6 +1834,7 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
+        // ^ don't need this for a final program but nice to have for now
         printProgram(program, std::cout);
     } catch (const std::exception& error) {
         std::cerr << "Compiler error: " << error.what() << '\n';
