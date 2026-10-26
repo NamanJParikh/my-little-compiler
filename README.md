@@ -103,3 +103,11 @@ and how to format machine code instructions and emit them. The LLVM backend code
 was very useful to review for getting comfortable with the idea of producing
 a raw executable and understanding how to handle issues like instruction encoding
 and addressing.
+
+### Code Review AI-generated code
+
+I'm finding the generated code even by the currently lowest-tier models to be
+quite good, although not the most polished. It definitely continues to need good
+review to keep good design and consistent structure throughout the program. It's also 
+just good practice to reign in the models a bit because they get a bit overzealous
+with making changes, and I don't want the code to get away from me too much.
