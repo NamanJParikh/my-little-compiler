@@ -1467,29 +1467,27 @@ class Parser {
             Address addr;
 
             if (token.size() >= 3 && token.front() == '[' && token.back() == ']') {
-                const std::string inner = token.substr(1, token.size() - 2);
-                std::stringstream ss(inner);
-                std::string regText;
-                if (ss >> regText) {
-                    // ^ I'd like to allow displacement from a label as well here 
-                    addr.baseRegister = parseRegister_(regText);
-                    std::string op;
-                    std::string valueText;
-                    if (ss >> op >> valueText) {
-                        const Immediate immediate = parseImmediate_(valueText);
-                        if (immediate.type == Type::Text) {
-                            throw std::runtime_error("Address displacement must be numeric: " + token);
+                std::string inner = token.substr(1, token.size() - 2);
+                trim_(inner);
+                const std::size_t opPos = inner.find_first_of("+-", 1);
+                std::string regText = inner.substr(0, opPos);
+                trim_(regText);
+                addr.baseRegister = parseRegister_(regText);
+
+                if (opPos != std::string::npos) {
+                    std::string valueText = inner.substr(opPos + 1);
+                    trim_(valueText);
+                    const Immediate immediate = parseImmediate_(valueText);
+                    if (immediate.type == Type::Text) {
+                        throw std::runtime_error("Address displacement must be numeric: " + token);
+                    }
+                    if (inner[opPos] == '-') {
+                        if (immediate.numericalValue == INT64_MIN) {
+                            throw std::runtime_error("Address displacement is out of range: " + token);
                         }
-                        if (op == "-") {
-                            if (immediate.numericalValue == INT64_MIN) {
-                                throw std::runtime_error("Address displacement is out of range: " + token);
-                            }
-                            addr.displacement = -immediate.numericalValue;
-                        } else if (op == "+") {
-                            addr.displacement = immediate.numericalValue;
-                        } else {
-                            throw std::runtime_error("Address displacement requires '+' or '-': " + token);
-                        }
+                        addr.displacement = -immediate.numericalValue;
+                    } else {
+                        addr.displacement = immediate.numericalValue;
                     }
                 }
                 return addr;
