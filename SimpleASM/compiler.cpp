@@ -1452,9 +1452,10 @@ class Parser {
             }
 
             if (regStr.size() > 1 && regStr[0] == 'R') {
-                // ^ std::stoi needs error checking
-                const int regNum = std::stoi(regStr.substr(1));
-                if (regNum >= 0 && regNum <= 15) {
+                const std::string regNumText = regStr.substr(1);
+                std::size_t parsedChars = 0;
+                const int regNum = std::stoi(regNumText, &parsedChars);
+                if (parsedChars == regNumText.size() && regNum >= 0 && regNum <= 15) {
                     return static_cast<Register>(regNum);
                 }
             }
