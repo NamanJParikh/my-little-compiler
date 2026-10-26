@@ -59,7 +59,9 @@ displacement with a register. Syntax for displacement is [Rx + I] or [Rx - I],
 where Rx is a register and I is an immediate value. The address is then the 
 address contained in Rx adjusted by the value I as specified. Simply addressing
 [Rx] takes the address to be the contents of Rx. Additionally, each line of code 
-can be labelled. These labels can then be referenced as addresses.
+can be labelled. These labels can then be referenced as addresses, with or without
+a displacement: `LABEL`, `LABEL + I`, or `LABEL - I`. Labels do not need to be
+enclosed in brackets.
 
 ## Return Codes
 
