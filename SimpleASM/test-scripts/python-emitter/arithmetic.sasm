@@ -1,0 +1,46 @@
+********************************************************************************
+.DATA
+********************************************************************************
+
+********************************************************************************
+.CODE
+********************************************************************************
+* Arithmetic, logical operations, register copies, and 64-bit wrapping.
+START   LI      R0, d42
+        LI      R1, d7
+        LI      R2, d3
+        LI      R3, d10
+        ADD     R3, R2
+        ADDI    R3, d2
+        SUBI    R3, d5
+        LR      R4, R3
+        SUB     R4, R2
+        MUL     R4, R2
+        DIV     R4, R2
+
+        LI      R5, d0
+        SUBI    R5, d3
+        LI      R6, d2
+        MULS    R5, R6
+        DIVS    R5, R6
+        LI      R7, d14
+        LI      R8, d4
+        DIV     R7, R8
+
+        LI      R9, d240
+        LI      R10, d204
+        AND     R9, R10
+        LR      R11, R9
+        OR      R9, R10
+        XOR     R9, R10
+        LI      R12, d3
+        LSH     R12, d4
+        RSH     R12, d4
+        LI      R13, d0
+        SUBI    R13, d3
+        RSHS    R13, d1
+        LI      R14, d0
+        SUBI    R14, d1
+        ADDI    R14, d1
+        LR      R15, R14
+        EXIT

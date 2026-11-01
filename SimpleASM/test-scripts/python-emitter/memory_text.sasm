@@ -1,0 +1,38 @@
+********************************************************************************
+.DATA
+********************************************************************************
+
+WORD    d72623859790382856
+BUF     d0
+TEXT    t'SimpleASM'
+TAIL    t' tests!'
+
+********************************************************************************
+.CODE
+********************************************************************************
+* Little-endian loads/stores, signed extension, label/base addressing, and WRTE.
+EXTRA   DEF     d99
+START   LI      R0, d73
+        LA      R1, WORD
+        LMU     R2, WORD, d1
+        LMU     R3, WORD + d2, d2
+        LMU     R4, WORD, d8
+        ST      R4, BUF, d8
+        LI      R5, d254
+        ST      R5, BUF, d1
+        LMU     R6, BUF, d1
+        LMS     R7, BUF, d1
+        LA      R8, BUF
+        LI      R9, d4660
+        ST      R9, [R8 + d2], d2
+        LMU     R10, [R8 + d2], d2
+        LI      R11, d32768
+        ST      R11, BUF + d4, d2
+        LMS     R12, BUF + d4, d2
+        LA      R13, TEXT
+        WRTE    [R13]
+        WRTE    TAIL
+        LA      R5, WORD + d2
+        LMU     R14, WORD, d4
+        LMU     R15, EXTRA, d8
+        EXIT

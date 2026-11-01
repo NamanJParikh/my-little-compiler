@@ -1,0 +1,47 @@
+********************************************************************************
+.DATA
+********************************************************************************
+
+********************************************************************************
+.CODE
+********************************************************************************
+* Equality, unsigned/signed ordering, conditional branches, and a loop.
+START   LI      R0, d0
+        LI      R1, d5
+        LI      R2, d5
+        CMP     R1, R2
+        BRC     EQUAL, 00
+        LI      R0, d99
+        BRU     DONE
+EQUAL   LI      R3, d1
+        BRC     SHOULDNOT, 01
+        LI      R4, d2
+        BRU     CHECKLESS
+SHOULDNOT LI      R4, d99
+CHECKLESS LI      R2, d6
+        CMP     R1, R2
+        BRC     LESS, 01
+        BRU     DONE
+LESS    LI      R5, d3
+        BRC     WRONG, 10
+        LI      R6, d1
+        LSH     R6, d63
+        LI      R7, d0
+        CMPS    R6, R7
+        BRC     SIGNLESS, 01
+        BRU     DONE
+SIGNLESS LI      R8, d4
+        CMP     R6, R7
+        BRC     UNSIGNEDGREATER, 10
+        BRU     DONE
+UNSIGNEDGREATER LI      R9, d5
+        LI      R10, d3
+        LI      R11, d0
+LOOP    ADDI    R11, d1
+        SUBI    R10, d1
+        LI      R12, d0
+        CMP     R10, R12
+        BRC     DONE, 00
+        BRU     LOOP
+WRONG   LI      R0, d98
+DONE    EXIT
