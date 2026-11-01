@@ -1175,12 +1175,17 @@ class PythonEmitter final : public Emitter {
                 if (!entry.label.empty()) {
                     dataLabels[entry.label] = memory.size();
                 }
+                // ^ just noting that there's no word/double word alignment here,
+                // ^ I think it's fine for the simplistic language but would be a good
+                // ^ performance boost for the actual executables
                 if (entry.value.type == Type::Text) {
                     for (unsigned char byte : entry.value.textValue) {
                         memory.push_back(byte);
                     }
                     memory.push_back(0);
                 } else {
+                    // ^ this is little endian, check the spec to confirm that's 
+                    // ^ how we want it
                     const uint64_t value = static_cast<uint64_t>(entry.value.numericalValue);
                     for (int byte = 0; byte < 8; ++byte) {
                         memory.push_back(static_cast<uint8_t>(value >> (byte * 8)));
@@ -1195,6 +1200,8 @@ class PythonEmitter final : public Emitter {
                 }
             }
 
+            // ^ the check_memory_range is questionable, we should allow leaving
+            // ^ the memory range since ideally there should be more memory out there
             std::ostringstream script;
             script << "#!/usr/bin/env python3\n"
                       "\"\"\"Generated Python emulator for a SimpleASM program.\"\"\"\n"
@@ -1254,6 +1261,7 @@ class PythonEmitter final : public Emitter {
             script << "    }\n"
                       "    pc = 0\n"
                       "    while 0 <= pc < " << program.codeSection.size() << ":\n";
+            // ^ pass might be philosophically better here
             if (program.codeSection.empty()) {
                 script << "        break\n";
             } else {
