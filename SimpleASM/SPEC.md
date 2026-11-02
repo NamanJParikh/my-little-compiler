@@ -24,6 +24,9 @@ to as Rc. This is used for comparisons and conditional control flow.
 
 Each program is made of two sections: ```.DATA``` and ```.CODE```. ```.DATA```
 contains a collection of data, while ```.CODE``` contains executable instructions.
+Lines are interpreted according to the most recently declared section; a
+```.DATA``` or ```.CODE``` declaration must appear before any data or instruction
+lines. Blank lines and lines beginning with ```*``` may appear outside sections.
 
 Each line in ```.DATA``` is of the format ```label value```. The data section
 is considered to be loaded directly into memory, and the labels can be used to
@@ -34,6 +37,9 @@ labels can be used for control flow to access different sections of code. Progra
 execution will begin at the start of ```.CODE```.
 
 Labels must be in all caps to distinguish them from the data described below.
+Every non-empty label must be unique across the entire program, including
+labels in ```.DATA```, labels on code instructions, and labels attached to
+```DEF``` entries. A duplicate label is an error.
 
 ## Data Formatting
 
@@ -125,7 +131,8 @@ Data entries are parsed into typed immediate values. Code lines are parsed into
 instructions with an optional label and operands represented as registers,
 immediates, addresses, or strings (used for values such as condition codes).
 Invalid opcodes, malformed data entries, and invalid immediate or register
-formats produce parser errors.
+formats produce parser errors. Non-comment content before a section declaration
+and duplicate labels also produce parser errors.
 
 `DEF` in the code section is treated as a data definition rather than an
 executable instruction. Its immediate is appended to the program's data section;

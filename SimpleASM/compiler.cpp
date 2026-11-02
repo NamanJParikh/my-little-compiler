@@ -1175,17 +1175,12 @@ class PythonEmitter final : public Emitter {
                 if (!entry.label.empty()) {
                     dataLabels[entry.label] = memory.size();
                 }
-                // ^ just noting that there's no word/double word alignment here,
-                // ^ I think it's fine for the simplistic language but would be a good
-                // ^ performance boost for the actual executables
                 if (entry.value.type == Type::Text) {
                     for (unsigned char byte : entry.value.textValue) {
                         memory.push_back(byte);
                     }
                     memory.push_back(0);
                 } else {
-                    // ^ this is little endian, check the spec to confirm that's 
-                    // ^ how we want it
                     const uint64_t value = static_cast<uint64_t>(entry.value.numericalValue);
                     for (int byte = 0; byte < 8; ++byte) {
                         memory.push_back(static_cast<uint8_t>(value >> (byte * 8)));
@@ -1200,8 +1195,6 @@ class PythonEmitter final : public Emitter {
                 }
             }
 
-            // ^ the check_memory_range is questionable, we should allow leaving
-            // ^ the memory range since ideally there should be more memory out there
             std::ostringstream script;
             script << "#!/usr/bin/env python3\n"
                       "\"\"\"Generated Python emulator for a SimpleASM program.\"\"\"\n"
@@ -1261,7 +1254,6 @@ class PythonEmitter final : public Emitter {
             script << "    }\n"
                       "    pc = 0\n"
                       "    while 0 <= pc < " << program.codeSection.size() << ":\n";
-            // ^ pass might be philosophically better here
             if (program.codeSection.empty()) {
                 script << "        break\n";
             } else {
@@ -1354,8 +1346,6 @@ class Parser {
                     continue;
                 }
 
-                // ^ is there sufficient error checking here for a badly formatted input program?
-
                 if (currLine == ".DATA") {
                     inData = true;
                     inCode = false;
@@ -1371,6 +1361,8 @@ class Parser {
                     parseData_(program, currLine);
                 } else if (inCode) {
                     parseCode_(program, currLine);
+                } else {
+                    throw std::runtime_error("Expected .DATA or .CODE before: " + currLine);
                 }
             }
 
@@ -1387,8 +1379,7 @@ class Parser {
             return tokens;
         }
 
-        // ^ it's not terrible but can we not combine this with stringToOpcode_?
-        static bool isOpcode_(const std::string& text) {
+        static const std::map<std::string, Opcode>& opcodeTable_() {
             static const std::map<std::string, Opcode> opcodes = {
                 {"DEF", Opcode::DEF}, {"LI", Opcode::LI}, {"LR", Opcode::LR}, {"LA", Opcode::LA},
                 {"LMU", Opcode::LMU}, {"LMS", Opcode::LMS}, {"ST", Opcode::ST}, {"AND", Opcode::AND},
@@ -1398,25 +1389,26 @@ class Parser {
                 {"DIVS", Opcode::DIVS}, {"CMP", Opcode::CMP}, {"CMPS", Opcode::CMPS}, {"BRU", Opcode::BRU},
                 {"BRC", Opcode::BRC}, {"EXIT", Opcode::EXIT}, {"WRTE", Opcode::WRTE}
             };
-            return opcodes.find(text) != opcodes.end();
+            return opcodes;
+        }
+
+        static bool isOpcode_(const std::string& text) {
+            return opcodeTable_().find(text) != opcodeTable_().end();
         }
 
         static Opcode stringToOpcode_(const std::string& opcodeText) {
-            static const std::map<std::string, Opcode> opcodes = {
-                {"DEF", Opcode::DEF}, {"LI", Opcode::LI}, {"LR", Opcode::LR}, {"LA", Opcode::LA},
-                {"LMU", Opcode::LMU}, {"LMS", Opcode::LMS}, {"ST", Opcode::ST}, {"AND", Opcode::AND},
-                {"OR", Opcode::OR}, {"XOR", Opcode::XOR}, {"LSH", Opcode::LSH}, {"RSH", Opcode::RSH},
-                {"RSHS", Opcode::RSHS}, {"ADD", Opcode::ADD}, {"ADDI", Opcode::ADDI}, {"SUB", Opcode::SUB},
-                {"SUBI", Opcode::SUBI}, {"MUL", Opcode::MUL}, {"MULS", Opcode::MULS}, {"DIV", Opcode::DIV},
-                {"DIVS", Opcode::DIVS}, {"CMP", Opcode::CMP}, {"CMPS", Opcode::CMPS}, {"BRU", Opcode::BRU},
-                {"BRC", Opcode::BRC}, {"EXIT", Opcode::EXIT}, {"WRTE", Opcode::WRTE}
-            };
-
-            auto it = opcodes.find(opcodeText);
+            const auto& opcodes = opcodeTable_();
+            const auto it = opcodes.find(opcodeText);
             if (it == opcodes.end()) {
                 throw std::runtime_error("Unknown instruction opcode: " + opcodeText);
             }
             return it->second;
+        }
+
+        static void addLabel_(Program& program, const std::string& label, uint64_t index) {
+            if (!label.empty() && !program.symbolTable.emplace(label, index).second) {
+                throw std::runtime_error("Duplicate label: " + label);
+            }
         }
 
         static Immediate parseImmediate_(const std::string& token) {
@@ -1515,6 +1507,25 @@ class Parser {
             return addr;
         }
 
+        static Operand parseOperand_(const std::string& operandText) {
+            if (operandText == "Rc" ||
+                (operandText.size() > 1 && operandText[0] == 'R' &&
+                 std::all_of(operandText.begin() + 1, operandText.end(), [](unsigned char ch) {
+                     return std::isdigit(ch);
+                 }))) {
+                return parseRegister_(operandText);
+            }
+            if (operandText[0] == '[' ||
+                std::isupper(static_cast<unsigned char>(operandText[0]))) {
+                return parseAddress_(operandText);
+            }
+            if (operandText[0] == 'd' || operandText[0] == 'b' ||
+                operandText[0] == 'x' || operandText[0] == 't') {
+                return parseImmediate_(operandText);
+            }
+            return operandText;
+        }
+
         void parseData_(Program& program, const std::string& line) {
             std::istringstream stream(line);
             std::string label;
@@ -1529,12 +1540,11 @@ class Parser {
                 throw std::runtime_error("Malformed .DATA entry: " + line);
             }
 
-            // ^ are we error handling duplicate labels appropriately ?
             DataEntry entry;
             entry.label = label;
             entry.value = parseImmediate_(valueText);
+            addLabel_(program, label, program.dataSection.size());
             program.dataSection.push_back(entry);
-            program.symbolTable[label] = program.dataSection.size() - 1;
         }
 
         void parseCode_(Program& program, const std::string& line) {
@@ -1562,22 +1572,7 @@ class Parser {
                 if (operandText.empty()) {
                     continue;
                 }
-
-                if (operandText == "Rc" ||
-                    (operandText.size() > 1 && operandText[0] == 'R' &&
-                     std::all_of(operandText.begin() + 1, operandText.end(), [](unsigned char ch) {
-                         return std::isdigit(ch);
-                     }))) {
-                    inst.operands.push_back(parseRegister_(operandText));
-                // ^ ... surely there is a cleaner way to do this
-                } else if (operandText[0] == '[' ||
-                           std::isupper(static_cast<unsigned char>(operandText[0]))) {
-                    inst.operands.push_back(parseAddress_(operandText));
-                } else if (operandText[0] == 'd' || operandText[0] == 'b' || operandText[0] == 'x' || operandText[0] == 't') {
-                    inst.operands.push_back(parseImmediate_(operandText));
-                } else {
-                    inst.operands.push_back(operandText);
-                }
+                inst.operands.push_back(parseOperand_(operandText));
             }
 
             if (inst.opcode == Opcode::DEF) {
@@ -1586,19 +1581,15 @@ class Parser {
                 }
 
                 const std::string label = inst.label.value_or("");
+                addLabel_(program, label, program.dataSection.size());
                 program.dataSection.push_back({label, std::get<Immediate>(inst.operands[0])});
-                // ^ I guess this is fine. surely there should never be a def without a label in
-                // ^ a correct program
-                if (!label.empty()) {
-                    program.symbolTable[label] = program.dataSection.size() - 1;
-                }
                 return;
             }
 
-            program.codeSection.push_back(inst);
             if (inst.label.has_value()) {
-                program.symbolTable[inst.label.value()] = program.codeSection.size() - 1;
+                addLabel_(program, *inst.label, program.codeSection.size());
             }
+            program.codeSection.push_back(inst);
         }
 };
 
@@ -1804,10 +1795,8 @@ int main(int argc, char* argv[]) {
         if (target.has_value()) {
             const auto emitter = createEmitter(*target);
             const auto output = emitter->emit(program);
-            // ^ this is a temporary check, right? will be removed after full implementation
             if (*target == Architecture::Python || *target == Architecture::X86) {
                 std::filesystem::path defaultOutputPath(sourceFile);
-                // ^ this won't generalize well to adding more architectures, should probably just case it
                 defaultOutputPath.replace_extension(*target == Architecture::Python ? ".py" : ".out");
                 const std::filesystem::path outputPath = outputFile.empty()
                     ? defaultOutputPath : std::filesystem::path(outputFile);
@@ -1829,7 +1818,6 @@ int main(int argc, char* argv[]) {
                 if (!file) {
                     throw std::runtime_error("Could not close output file: " + outputPath.string());
                 }
-                // ^ again would make this a case for full implementation
                 if (*target == Architecture::X86) {
                     std::error_code permissionError;
                     std::filesystem::permissions(outputPath,
@@ -1853,7 +1841,6 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        // ^ don't need this for a final program but nice to have for now
         printProgram(program, std::cout);
     } catch (const std::exception& error) {
         std::cerr << "Compiler error: " << error.what() << '\n';
