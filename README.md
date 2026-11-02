@@ -111,3 +111,10 @@ quite good, although not the most polished. It definitely continues to need good
 review to keep good design and consistent structure throughout the program. It's also 
 just good practice to reign in the models a bit because they get a bit overzealous
 with making changes, and I don't want the code to get away from me too much.
+
+### Unit Testing
+
+This is definitely made a lot more efficient with AI, but I'm finding that it 
+needs some pointers to get comprehensive tests. Unrelated to AI, I've never
+used elaborate testing tools like the python unittest library, so I'm finding
+the process very informative.
