@@ -71,11 +71,24 @@ class PythonEmitterTests(unittest.TestCase):
                         f"Reference stderr:\n{expected_result.stderr}\n"
                         f"Emitter stderr:\n{actual_result.stderr}",
                     )
-                    self.assertEqual(
-                        expected_result.stderr,
-                        actual_result.stderr,
-                        f"Standard error differs for {source.name}",
-                    )
+                    if expected_result.stderr.strip():
+                        expected_error = expected_result.stderr.strip().splitlines()
+                        actual_error = actual_result.stderr.strip().splitlines()
+                        self.assertTrue(expected_error, f"Reference did not report an error for {source.name}")
+                        self.assertTrue(actual_error, f"Emitter did not report an error for {source.name}")
+                        self.assertEqual(
+                            expected_error[-1],
+                            actual_error[-1],
+                            f"Error differs for {source.name}.\n"
+                            f"Reference stderr:\n{expected_result.stderr}\n"
+                            f"Emitter stderr:\n{actual_result.stderr}",
+                        )
+                    else:
+                        self.assertEqual(
+                            expected_result.stderr,
+                            actual_result.stderr,
+                            f"Standard error differs for {source.name}",
+                        )
 
 
 if __name__ == "__main__":

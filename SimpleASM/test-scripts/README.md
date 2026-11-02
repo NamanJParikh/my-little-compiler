@@ -23,6 +23,8 @@ directory, runs the emitted Python and its paired `*.expected.py` reference,
 and compares standard output and process exit status. It covers the arithmetic,
 logical, comparison, branch, memory, and text-output instructions supported by
 the Python emitter. The paired references describe expected final registers,
-memory, and output independently of emitted code. Fixtures also exercise
-data-only programs with no `.CODE` section, code-only programs with no `.DATA`
-section, and an entirely empty program.
+memory, and output independently of emitted code. Negative fixtures verify
+runtime errors for out-of-bounds memory and text accesses, non-ASCII text
+output, and signed and unsigned division by zero. Fixtures exercise data-only
+programs with no `.CODE` section, code-only programs with no `.DATA` section,
+and an entirely empty program.
