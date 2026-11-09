@@ -798,6 +798,7 @@ class X86CodeGenerator {
         }
 
         void emitInstruction(const Instruction& instruction) {
+            // ^ signedMultiply is never used, can we safely get rid of it?
             auto binary = [&](uint8_t opcode, bool signedMultiply = false) {
                 requireOperandCount(instruction, 2);
                 const int destination = guestRegister(instruction, 0);
@@ -1043,6 +1044,9 @@ class X86CodeGenerator {
         }
 
         void buildCode() {
+            // ^ zeroing out the registers at the start may not be the best move
+            // ^ for more complex situations where multiple programs are being
+            // ^ chained together
             for (int guest = 0; guest < DirectGuestRegisterCount; ++guest) {
                 const int native = nativeRegister(guest);
                 emitRegReg(0x31, native, native);
