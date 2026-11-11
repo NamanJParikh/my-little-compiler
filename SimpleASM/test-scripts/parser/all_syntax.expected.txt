@@ -1,0 +1,51 @@
+.DATA (6 entries)
+  0: DECIMAL = Decimal(-42)
+  1: BINARY = Binary(10)
+  2: HEXADECIMAL = Hex(42)
+  3: TEXT = Text("hello world")
+  4: <anonymous> = Decimal(7)
+  5: EXTRA = Text("extra data")
+.CODE (35 instructions)
+  START: LI R0, Decimal(1)
+  LR R1, R0
+  LA R2, DECIMAL
+  LA R3, DECIMAL + 2
+  LA R4, DECIMAL - 2
+  LA R5, [R1]
+  LA R6, [R1 + 2]
+  LA R7, [R1 - 2]
+  LMU R8, [R1], Decimal(4)
+  LMS R9, [R1 + 1], Decimal(2)
+  ST R8, [R1 - 1], Decimal(4)
+  AND R0, R1
+  OR R0, R1
+  XOR R0, R1
+  LSH R0, Decimal(1)
+  RSH R0, Decimal(1)
+  RSHS R0, Decimal(1)
+  ADD R0, R1
+  ADDI R0, Decimal(1)
+  SUB R0, R1
+  SUBI R0, Decimal(1)
+  MUL R0, R1
+  MULS R0, R1
+  DIV R0, R1
+  DIVS R0, R1
+  CMP R0, R1
+  CMPS R0, R1
+  BRC FINISH, 00
+  BRC FINISH, Decimal(2)
+  BRU FINISH
+  WRTE TEXT
+  LI Rc, Decimal(0)
+  LI R15, Binary(1)
+  LI R14, Hex(255)
+  FINISH: EXIT
+Symbols (7 entries)
+  BINARY -> 1
+  DECIMAL -> 0
+  EXTRA -> 5
+  FINISH -> 34
+  HEXADECIMAL -> 2
+  START -> 0
+  TEXT -> 3

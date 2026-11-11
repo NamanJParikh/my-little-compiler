@@ -1,0 +1,6 @@
+.DATA (0 entries)
+.CODE (2 instructions)
+  ENTRY: LI R0, Decimal(0)
+  EXIT
+Symbols (1 entries)
+  ENTRY -> 0

@@ -1,0 +1,5 @@
+.DATA (1 entries)
+  0: VALUE = Decimal(42)
+.CODE (0 instructions)
+Symbols (1 entries)
+  VALUE -> 0

@@ -6,6 +6,18 @@ Run the Python-emitter regression suite from the repository root:
 python3 SimpleASM/test-scripts/test_python_emitter.py
 ```
 
+Run the parser regression suite from the repository root:
+
+```sh
+python3 SimpleASM/test-scripts/test_parser.py
+```
+
+The parser harness runs the compiler with `--emit print` and compares its
+parsed-program output to the paired `parser/*.expected.txt` snapshots. Its
+fixtures cover every opcode, operand type, immediate type, addressing form,
+label handling, data-only and code-only programs, and empty input. It also
+checks that representative malformed inputs are rejected with parser errors.
+
 To compare one expected Python script with one compiler-generated script:
 
 ```sh

@@ -1,0 +1,44 @@
+* Exercise every opcode, operand variant, immediate type, and address form.
+.DATA
+DECIMAL d-42
+BINARY b1010
+HEXADECIMAL x2a
+TEXT t'hello world'
+.CODE
+START LI R0, d1
+      LR R1, R0
+      LA R2, DECIMAL
+      LA R3, DECIMAL + d2
+      LA R4, DECIMAL - d2
+      LA R5, [R1]
+      LA R6, [R1 + d2]
+      LA R7, [R1 - d2]
+      LMU R8, [R1], d4
+      LMS R9, [R1 + d1], d2
+      ST R8, [R1 - d1], d4
+      AND R0, R1
+      OR R0, R1
+      XOR R0, R1
+      LSH R0, d1
+      RSH R0, d1
+      RSHS R0, d1
+      ADD R0, R1
+      ADDI R0, d1
+      SUB R0, R1
+      SUBI R0, d1
+      MUL R0, R1
+      MULS R0, R1
+      DIV R0, R1
+      DIVS R0, R1
+      CMP R0, R1
+      CMPS R0, R1
+      BRC FINISH, 00
+      BRC FINISH, d2
+      BRU FINISH
+      WRTE TEXT
+      LI Rc, d0
+      LI R15, b1
+      LI R14, xff
+      DEF d7
+EXTRA DEF t'extra data'
+FINISH EXIT

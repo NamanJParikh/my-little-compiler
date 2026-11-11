@@ -1,0 +1,3 @@
+.CODE
+ENTRY LI R0, d0
+      EXIT
