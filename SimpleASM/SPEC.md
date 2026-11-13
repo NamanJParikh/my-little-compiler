@@ -190,3 +190,13 @@ Use `--emit x86` to write an executable beside the source file with a `.out`
 extension. Use `-o` or `--output` to select another output path. The generated
 executable is for 64-bit x86 Linux systems; it is not runnable natively on
 macOS or Windows.
+
+For testing, `--x86-state-fd <fd>` enables an optional final state snapshot
+written to the specified inherited file descriptor (3 or higher)
+immediately before termination. The snapshot begins with the 8-byte magic `SASMST1\0`,
+followed by a little-endian 64-bit storage length, eight little-endian 64-bit
+values for R0-R7, an 8-byte little-endian condition value (`Rc`), and the
+program's storage bytes in their original order. This excludes internal
+register backing slots and condition-state storage. The snapshot is emitted
+both for an explicit `EXIT` and when execution falls off the end of `.CODE`;
+without the option, generated behavior is unchanged.

@@ -403,6 +403,7 @@ class X86CodeGenerator {
         static constexpr int DirectGuestRegisterCount = 8;
 
         const Program& program_;
+        std::optional<int> stateSnapshotFd_;
         std::vector<uint8_t> code_;
         std::vector<uint8_t> data_;
         std::map<std::string, std::size_t> dataLabels_;
@@ -410,8 +411,11 @@ class X86CodeGenerator {
         std::vector<RipFixup> ripFixups_;
         std::vector<BranchFixup> branchFixups_;
         std::size_t conditionOffset_ = 0;
+        std::size_t programDataSize_ = 0;
+        std::size_t stateSnapshotOffset_ = 0;
         static constexpr std::size_t CodeFileOffset = 0x1000;
         static constexpr uint64_t ImageBase = 0x400000;
+        static constexpr std::size_t StateSnapshotHeaderSize = 88;
 
         static void append8(std::vector<uint8_t>& output, uint8_t value) {
             output.push_back(value);
@@ -797,6 +801,110 @@ class X86CodeGenerator {
             patchLocalBranch(notInterruptedField, done, "WRTE error completion branch");
         }
 
+        void emitRipRelativeAddress(int destination, std::size_t dataOffset) {
+            emitRex(code_, true, destination, 0, 0);
+            append8(code_, 0x8D);
+            append8(code_, static_cast<uint8_t>(((destination & 7) << 3) | 5));
+            const std::size_t fieldOffset = code_.size();
+            append32(code_, 0);
+            ripFixups_.push_back({fieldOffset, static_cast<int64_t>(dataOffset), code_.size()});
+        }
+
+        void emitWriteAll(int fd, uint64_t length) {
+            if (length == 0) {
+                throw std::logic_error("Cannot emit an empty state snapshot write");
+            }
+            const std::size_t writeLoop = code_.size();
+            append8(code_, 0xB8);
+            append32(code_, 1); // write syscall
+            append8(code_, 0xBF);
+            append32(code_, static_cast<uint32_t>(fd));
+            append8(code_, 0x0F);
+            append8(code_, 0x05); // syscall
+            append8(code_, 0x48);
+            append8(code_, 0x85);
+            append8(code_, 0xC0); // test rax, rax
+            const std::size_t zeroWriteField = emitConditionalPlaceholder(0x04); // je error
+            const std::size_t errorBranchField = emitConditionalPlaceholder(0x08); // js error
+            append8(code_, 0x48);
+            append8(code_, 0x01);
+            append8(code_, 0xC6); // add rsi, rax
+            append8(code_, 0x48);
+            append8(code_, 0x29);
+            append8(code_, 0xC2); // sub rdx, rax
+            const std::size_t moreBytesField = emitConditionalPlaceholder(0x05); // jne write loop
+            append8(code_, 0xE9);
+            const std::size_t completedField = code_.size();
+            append32(code_, 0);
+            const std::size_t errorHandling = code_.size();
+            append8(code_, 0x48);
+            append8(code_, 0x83);
+            append8(code_, 0xF8);
+            append8(code_, 0xFC); // cmp rax, -EINTR
+            const std::size_t notInterruptedField = emitConditionalPlaceholder(0x05); // jne error
+            emitLocalBranch(0xFF, writeLoop);
+            const std::size_t error = code_.size();
+            append8(code_, 0xBF);
+            append32(code_, 255);
+            append8(code_, 0xB8);
+            append32(code_, 60); // exit syscall
+            append8(code_, 0x0F);
+            append8(code_, 0x05);
+            const std::size_t done = code_.size();
+            patchLocalBranch(zeroWriteField, error, "State snapshot zero-write branch");
+            patchLocalBranch(errorBranchField, errorHandling, "State snapshot error branch");
+            patchLocalBranch(moreBytesField, writeLoop, "State snapshot partial-write branch");
+            patchLocalBranch(completedField, done, "State snapshot completion branch");
+            patchLocalBranch(notInterruptedField, error, "State snapshot EINTR branch");
+        }
+
+        void emitStateSnapshot() {
+            if (!stateSnapshotFd_) {
+                return;
+            }
+
+            emitRipRelativeAddress(7, stateSnapshotOffset_); // lea rdi, [snapshot header]
+            for (int guest = 0; guest < DirectGuestRegisterCount; ++guest) {
+                const int native = nativeRegister(guest);
+                emitRex(code_, true, native, 0, 7);
+                append8(code_, 0x89); // mov [rdi + disp32], guest register
+                append8(code_, static_cast<uint8_t>(0x80 | ((native & 7) << 3) | 7));
+                append32(code_, static_cast<uint32_t>(16 + guest * 8));
+            }
+
+            append8(code_, 0x8B); // mov eax, dword ptr [rip + condition]
+            append8(code_, 0x05);
+            const std::size_t conditionFieldOffset = code_.size();
+            append32(code_, 0);
+            ripFixups_.push_back({
+                conditionFieldOffset, static_cast<int64_t>(conditionOffset_), code_.size()
+            });
+            append8(code_, 0x89); // mov dword ptr [rdi + 80], eax
+            append8(code_, 0x87);
+            append32(code_, 80);
+
+            emitRipRelativeAddress(6, stateSnapshotOffset_); // lea rsi, [snapshot header]
+            append8(code_, 0xBA);
+            append32(code_, static_cast<uint32_t>(StateSnapshotHeaderSize));
+            emitWriteAll(*stateSnapshotFd_, StateSnapshotHeaderSize);
+
+            if (programDataSize_ != 0) {
+                emitRipRelativeAddress(6, 0); // lea rsi, [program storage]
+                append8(code_, 0xBA);
+                append32(code_, static_cast<uint32_t>(programDataSize_));
+                emitWriteAll(*stateSnapshotFd_, programDataSize_);
+            }
+        }
+
+        void emitExit() {
+            emitStateSnapshot();
+            emitRegReg(0x89, nativeRegister(0), 7); // mov rdi, R0
+            append8(code_, 0xB8);
+            append32(code_, 60); // Linux x86-64 exit syscall
+            append8(code_, 0x0F);
+            append8(code_, 0x05);
+        }
+
         void emitInstruction(const Instruction& instruction) {
             // ^ signedMultiply is never used, can we safely get rid of it?
             auto binary = [&](uint8_t opcode, bool signedMultiply = false) {
@@ -1011,11 +1119,7 @@ class X86CodeGenerator {
                     break;
                 case Opcode::EXIT:
                     requireOperandCount(instruction, 0);
-                    emitRegReg(0x89, nativeRegister(0), 7); // mov rdi, R0
-                    append8(code_, 0xB8);
-                    append32(code_, 60); // Linux x86-64 exit syscall
-                    append8(code_, 0x0F);
-                    append8(code_, 0x05);
+                    emitExit();
                     break;
                 case Opcode::DEF:
                     throw std::invalid_argument("DEF must be represented in the data section");
@@ -1036,11 +1140,21 @@ class X86CodeGenerator {
                     append64(data_, static_cast<uint64_t>(entry.value.numericalValue));
                 }
             }
+            programDataSize_ = data_.size();
+            if (stateSnapshotFd_ && programDataSize_ > UINT32_MAX) {
+                throw std::invalid_argument("x86 state snapshots support at most 4 GiB of program storage");
+            }
             // R8-R15 backing slots, in register order, keep later spill support
             // from changing the layout of the program's data entries.
             data_.resize(data_.size() + (16 - DirectGuestRegisterCount) * 8, 0);
             conditionOffset_ = data_.size();
             data_.resize(data_.size() + 8, 0);
+            if (stateSnapshotFd_) {
+                stateSnapshotOffset_ = data_.size();
+                data_.insert(data_.end(), {'S', 'A', 'S', 'M', 'S', 'T', '1', 0});
+                append64(data_, static_cast<uint64_t>(programDataSize_));
+                data_.resize(data_.size() + 8 * 8 + 8, 0);
+            }
         }
 
         void buildCode() {
@@ -1058,11 +1172,7 @@ class X86CodeGenerator {
                 emitInstruction(instruction);
             }
             // Reaching the end of .CODE is equivalent to EXIT with the current R0.
-            emitRegReg(0x89, nativeRegister(0), 7);
-            append8(code_, 0xB8);
-            append32(code_, 60);
-            append8(code_, 0x0F);
-            append8(code_, 0x05);
+            emitExit();
         }
 
         void resolveFixups(std::size_t dataFileOffset) {
@@ -1138,7 +1248,8 @@ class X86CodeGenerator {
         }
 
     public:
-        explicit X86CodeGenerator(const Program& program) : program_(program) {}
+        explicit X86CodeGenerator(const Program& program, std::optional<int> stateSnapshotFd)
+            : program_(program), stateSnapshotFd_(stateSnapshotFd) {}
 
         std::vector<uint8_t> generate() {
             buildData();
@@ -1148,9 +1259,15 @@ class X86CodeGenerator {
 };
 
 class X86Emitter final : public Emitter {
+    private:
+        std::optional<int> stateSnapshotFd_;
+
     public:
+        explicit X86Emitter(std::optional<int> stateSnapshotFd = std::nullopt)
+            : stateSnapshotFd_(stateSnapshotFd) {}
+
         std::vector<uint8_t> emit(const Program& program) const override {
-            return X86CodeGenerator(program).generate();
+            return X86CodeGenerator(program, stateSnapshotFd_).generate();
         }
 };
 
@@ -1288,10 +1405,11 @@ class PythonEmitter final : public Emitter {
         }
 };
 
-std::unique_ptr<Emitter> createEmitter(Architecture architecture) {
+std::unique_ptr<Emitter> createEmitter(Architecture architecture,
+                                       std::optional<int> x86StateSnapshotFd = std::nullopt) {
     switch (architecture) {
         case Architecture::X86:
-            return std::make_unique<X86Emitter>();
+            return std::make_unique<X86Emitter>(x86StateSnapshotFd);
         case Architecture::ARM:
             return std::make_unique<ARMEmitter>();
         case Architecture::IBMZ:
@@ -1716,11 +1834,13 @@ static std::optional<Architecture> parseArchitecture_(const std::string& value) 
 
 static void printUsage_(const char* argv0) {
     std::cerr << "Usage: " << argv0 << " [--emit <target>] [-o <output_file>] <source_file.s>\n"
-              << "Targets: print, x86, arm, ibmz, python\n";
+              << "Targets: print, x86, arm, ibmz, python\n"
+              << "       [--x86-state-fd <fd>] writes an x86 final-state snapshot to <fd>\n";
 }
 
 int main(int argc, char* argv[]) {
     std::optional<Architecture> target;
+    std::optional<int> x86StateSnapshotFd;
     std::string sourceFile;
     std::string outputFile;
 
@@ -1757,6 +1877,26 @@ int main(int argc, char* argv[]) {
             outputFile = argv[++i];
             continue;
         }
+        if (arg == "--x86-state-fd") {
+            if (i + 1 >= argc) {
+                std::cerr << "--x86-state-fd requires a non-negative file descriptor\n";
+                return 1;
+            }
+            const std::string value = argv[++i];
+            std::size_t parsedChars = 0;
+            long long fd = -1;
+            try {
+                fd = std::stoll(value, &parsedChars, 10);
+            } catch (const std::exception&) {
+                parsedChars = 0;
+            }
+            if (parsedChars != value.size() || fd < 3 || fd > INT32_MAX) {
+                std::cerr << "Invalid x86 state snapshot file descriptor: " << value << '\n';
+                return 1;
+            }
+            x86StateSnapshotFd = static_cast<int>(fd);
+            continue;
+        }
         if (arg.rfind("--emit=", 0) == 0) {
             const std::string next = arg.substr(7);
             if (next == "print") {
@@ -1791,13 +1931,17 @@ int main(int argc, char* argv[]) {
         std::cerr << "--output is only supported with --emit python or --emit x86\n";
         return 1;
     }
+    if (x86StateSnapshotFd && (!target.has_value() || *target != Architecture::X86)) {
+        std::cerr << "--x86-state-fd is only supported with --emit x86\n";
+        return 1;
+    }
 
     try {
         Parser parser(sourceFile);
         const Program program = parser.parse();
 
         if (target.has_value()) {
-            const auto emitter = createEmitter(*target);
+            const auto emitter = createEmitter(*target, x86StateSnapshotFd);
             const auto output = emitter->emit(program);
             if (*target == Architecture::Python || *target == Architecture::X86) {
                 std::filesystem::path defaultOutputPath(sourceFile);
