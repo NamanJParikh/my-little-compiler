@@ -1,0 +1,10 @@
+.DATA
+VALUE d0
+MESSAGE t'x86 test'
+.CODE
+START LI R1, d40
+      ADDI R1, d2
+      ST R1, VALUE, d8
+      LR R0, R1
+      WRTE MESSAGE
+      EXIT

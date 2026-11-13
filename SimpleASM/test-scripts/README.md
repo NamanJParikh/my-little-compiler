@@ -47,6 +47,18 @@ and an entirely empty program.
 
 ### x86 Emitter
 
+Run the x86-emitter regression suite from the repository root with Docker
+available and `SimpleASM/compile` built:
+
+```sh
+python3 SimpleASM/test-scripts/test_x86_emitter.py
+```
+
+The harness compiles every `x86-emitter/*.sasm` fixture with state snapshots
+enabled, runs each ELF in a `linux/amd64` Ubuntu container, and compares its
+exit status, stdout, stderr, final R0-R7 and Rc values, and complete program
+storage against the paired `*.expected.json` file.
+
 For x86-64 ELF tests on macOS, run the generated executable in an `amd64` Linux
 container. `--x86-state-fd 3` enables a final-state snapshot on inherited file
 descriptor 3, separate from program stdout:
