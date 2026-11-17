@@ -103,6 +103,30 @@ class X86EmitterTests(unittest.TestCase):
                     self.assertEqual(condition, expected["rc"], "Final Rc differs")
                     self.assertEqual(storage.hex(), expected["storage_hex"], "Final storage differs")
 
+    def test_rejects_registers_outside_supported_range(self):
+        invalid_sources = {
+            "R8 instruction operand": (".CODE\nLI R8, d1\nEXIT\n", "x86 emitter"),
+            "R8 address base": (".CODE\nLA R0, [R8]\nEXIT\n", "x86 emitter"),
+            "condition register as general register": (
+                ".CODE\nLI Rc, d1\nEXIT\n",
+                "must be a general register",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="simpleasm-x86-invalid-") as temp_dir:
+            for name, (source_text, expected_error) in invalid_sources.items():
+                with self.subTest(source=name):
+                    source = Path(temp_dir) / "invalid.sasm"
+                    source.write_text(source_text)
+                    result = subprocess.run(
+                        [str(COMPILER), "--emit", "x86", str(source)],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                        check=False,
+                    )
+                    self.assertNotEqual(result.returncode, 0, f"Compiler accepted {name}")
+                    self.assertIn(expected_error, result.stderr, f"Unexpected error for {name}")
+
 
 if __name__ == "__main__":
     unittest.main()

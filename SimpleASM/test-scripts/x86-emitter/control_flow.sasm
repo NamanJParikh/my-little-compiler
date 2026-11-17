@@ -1,0 +1,36 @@
+.CODE
+START LI R0, d0
+      LI R1, d5
+      LI R2, d5
+      CMP R1, R2
+      BRC EQUAL, d0
+      LI R0, d99
+      BRU DONE
+EQUAL LI R3, d1
+      BRC SHOULDNOT, 01
+      LI R2, d6
+      CMP R1, R2
+      BRC LESS, 01
+      BRU DONE
+SHOULDNOT LI R0, d98
+LESS  CMP R2, R1
+      BRC GREATER, 10
+      BRU DONE
+GREATER LI R6, d1
+        LSH R6, d63
+        LI R7, d0
+        CMPS R6, R7
+        BRC SIGNEDLESS, 01
+        BRU DONE
+SIGNEDLESS CMP R6, R7
+           BRC UNSIGNEDGREATER, 10
+           BRU DONE
+UNSIGNEDGREATER LI R4, d3
+                LI R5, d0
+LOOP ADDI R5, d1
+     SUBI R4, d1
+     LI R3, d0
+     CMP R4, R3
+     BRC DONE, 00
+     BRU LOOP
+DONE EXIT

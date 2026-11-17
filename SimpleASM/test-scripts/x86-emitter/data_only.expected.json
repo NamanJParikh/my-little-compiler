@@ -1,0 +1,17 @@
+{
+  "exit_status": 0,
+  "stdout": "",
+  "stderr": "",
+  "registers": {
+    "R0": 0,
+    "R1": 0,
+    "R2": 0,
+    "R3": 0,
+    "R4": 0,
+    "R5": 0,
+    "R6": 0,
+    "R7": 0
+  },
+  "rc": 0,
+  "storage_hex": "ffffffffffffffff68656c6c6f00"
+}
