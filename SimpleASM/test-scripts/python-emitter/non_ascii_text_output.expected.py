@@ -1,1 +1,9 @@
-raise UnicodeDecodeError('ascii', b'\xc3\xa9\x00', 0, 1, 'ordinal not in range(128)')
+from reference_runtime import run_reference
+
+registers = [0] * 17
+
+memory = bytearray.fromhex(
+    "c3a900"
+)
+
+raise SystemExit(run_reference(registers, memory, "é"))

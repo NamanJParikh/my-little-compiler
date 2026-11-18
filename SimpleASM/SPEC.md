@@ -159,12 +159,13 @@ Parsing produces a `Program` containing:
 The Python target emits runnable Python code for each SimpleASM instruction.
 Its emulator uses 64-bit registers, a 2-bit condition register, and
 little-endian byte-addressed memory. Numeric data entries occupy eight bytes;
-text entries are terminated by a zero byte. Loads, stores, and
-text output use those memory addresses. Signed arithmetic and comparisons use
-two's-complement register values, and arithmetic results wrap to 64 bits. After
-execution, the generated script prints the return code in `R0`, the values of
-`R0` through `R15` and `Rc`, and the complete storage contents as hexadecimal
-bytes. The process exit status is the low byte of `R0`.
+text entries are decoded as UTF-8 terminated by zero (since UTF-8 is the modern
+standard encoding). Loads, stores, and text output use those memory addresses. 
+Signed arithmetic and comparisons use two's-complement register values, and 
+arithmetic results wrap to 64 bits. After execution, the generated script 
+prints the return code in `R0`, the values of `R0` through `R15` and `Rc`, and 
+the complete storage contents as hexadecimal bytes. The process exit status is 
+the low byte of `R0`.
 
 Use `--emit python` to write the generated script beside the source file with
 a `.py` extension. The output path can be overridden with `-o` or `--output`.

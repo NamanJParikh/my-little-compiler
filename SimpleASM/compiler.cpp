@@ -1352,7 +1352,7 @@ class PythonEmitter final : public Emitter {
                       "    end = memory.find(b'\\0', address)\n"
                       "    if end < 0:\n"
                       "        end = len(memory)\n"
-                      "    sys.stdout.write(bytes(memory[address:end]).decode('ascii'))\n\n"
+                      "    sys.stdout.write(bytes(memory[address:end]).decode('utf-8'))\n\n"
                       "def main():\n"
                       "    registers = [0] * 17\n"
                       "    memory = bytearray([";
