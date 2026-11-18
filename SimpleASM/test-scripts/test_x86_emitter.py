@@ -64,6 +64,8 @@ class X86EmitterTests(unittest.TestCase):
                         f"Compiler failed for {source.name}:\n{compile_result.stderr}",
                     )
                     self.assertTrue(executable.is_file(), f"Compiler did not create ELF for {source.name}")
+                    if expected.get("compile_only"):
+                        continue
 
                     run_result = subprocess.run(
                         [
