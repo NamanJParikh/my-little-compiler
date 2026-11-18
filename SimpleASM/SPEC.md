@@ -179,13 +179,25 @@ terminated by a zero byte. Code labels are resolved to instruction addresses,
 and data-label references use RIP-relative addressing with displacements
 measured from the end of each x86 instruction.
 
-The initial implementation maps SimpleASM R0-R7 to x86-64 registers and rejects
-programs that use R8-R15. The writable data segment reserves zero-initialized
-backing slots for those additional registers for a later memory-backed mapping.
+The x86-64 emitter maps SimpleASM R0-R8 directly to native registers and stores
+R9-R15 in zero-initialized eight-byte slots in the writable data segment.
+SimpleASM R0-R8 map, in order, to native R8, R9, R10, R12, R13, R14, R15, RBX,
+and RBP. Spilled registers are loaded into reserved scratch registers for each
+operation and written back when modified; address bases in spill slots are
+materialized in R11.
+
+The emitter does not use native RSP as a guest register because it is the
+process stack pointer. RAX, RCX, RDX, RSI, and RDI are reserved as operation
+scratch and syscall argument/result registers; division specifically uses RAX
+and RDX, and memory and text operations use RSI and RDI. Native RCX and R11 are
+also clobbered by the Linux `SYSCALL` instruction; R11 is used only as
+short-lived address scratch, never to hold a guest value across a syscall.
 Runtime condition state is stored separately from x86 flags so that `Rc`
-persists between instructions. `WRTE` writes a NUL-terminated string to standard
-output using Linux system calls. `EXIT`, and falling off the end of `.CODE`,
-terminate with the low byte of R0 as the process status.
+persists between instructions.
+
+`WRTE` writes a NUL-terminated string to standard output using Linux system
+calls. `EXIT`, and falling off the end of `.CODE`, terminate with the low byte
+of R0 as the process status.
 
 Use `--emit x86` to write an executable beside the source file with a `.out`
 extension. Use `-o` or `--output` to select another output path. The generated
@@ -194,9 +206,9 @@ macOS or Windows.
 
 For testing, `--x86-state-fd <fd>` enables an optional final state snapshot
 written to the specified inherited file descriptor (3 or higher)
-immediately before termination. The snapshot begins with the 8-byte magic `SASMST1\0`,
-followed by a little-endian 64-bit storage length, eight little-endian 64-bit
-values for R0-R7, an 8-byte little-endian condition value (`Rc`), and the
+immediately before termination. The snapshot begins with the 8-byte magic `SASMST3\0`,
+followed by a little-endian 64-bit storage length, sixteen little-endian 64-bit
+values for R0-R15, an 8-byte little-endian condition value (`Rc`), and the
 program's storage bytes in their original order. This excludes internal
 register backing slots and condition-state storage. The snapshot is emitted
 both for an explicit `EXIT` and when execution falls off the end of `.CODE`;

@@ -5,9 +5,10 @@ import struct
 import sys
 
 
-MAGIC = b"SASMST1\0"
-HEADER_SIZE = 88
-REGISTER_COUNT = 8
+MAGIC = b"SASMST3\0"
+REGISTER_COUNT = 16
+CONDITION_OFFSET = 16 + REGISTER_COUNT * 8
+HEADER_SIZE = CONDITION_OFFSET + 8
 ROW_SIZE = 16
 
 
@@ -26,8 +27,8 @@ def read_snapshot(path):
             f"but file contains {len(data) - HEADER_SIZE}"
         )
 
-    registers = struct.unpack_from("<8Q", data, 16)
-    condition = struct.unpack_from("<Q", data, 80)[0]
+    registers = struct.unpack_from(f"<{REGISTER_COUNT}Q", data, 16)
+    condition = struct.unpack_from("<Q", data, CONDITION_OFFSET)[0]
     if condition > 3:
         raise ValueError(f"invalid condition register value: {condition}")
     return registers, condition, data[HEADER_SIZE:]

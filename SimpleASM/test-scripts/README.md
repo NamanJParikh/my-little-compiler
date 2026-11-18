@@ -56,12 +56,13 @@ python3 SimpleASM/test-scripts/test_x86_emitter.py
 
 The harness compiles every `x86-emitter/*.sasm` fixture with state snapshots
 enabled, runs each ELF in a `linux/amd64` Ubuntu container, and compares its
-exit status, stdout, stderr, final R0-R7 and Rc values, and complete program
+exit status, stdout, stderr, all R0-R15 and Rc values, and complete program
 storage against the paired `*.expected.json` file. Fixtures cover the
 arithmetic, logical, comparison, branch, memory, and text instructions
 currently implemented by the x86 backend, plus data-only and empty programs.
-All programs stay within the supported R0-R7 range; separate negative tests
-check that R8, an R8 address base, and Rc as a general register are rejected.
+The R8 fixture tests R8 as an instruction operand and address base; separate
+negative tests check that invalid register identifiers and Rc as a general
+register are rejected.
 
 For x86-64 ELF tests on macOS, run the generated executable in an `amd64` Linux
 container. `--x86-state-fd 3` enables a final-state snapshot on inherited file
@@ -75,7 +76,7 @@ docker run --rm --platform linux/amd64 -v /tmp:/work -w /work ubuntu:24.04 \
 
 The snapshot file is `/tmp/state.bin` on the host. Its binary layout is
 documented in `SimpleASM/SPEC.md`; it contains the x86 backend's supported
-registers R0-R7, Rc, and the final program storage bytes.
+registers R0-R15, Rc, and the final program storage bytes.
 Display it from the repository root with:
 
 ```sh

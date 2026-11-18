@@ -99,14 +99,21 @@ class X86EmitterTests(unittest.TestCase):
                     actual_registers = {
                         f"R{index}": value for index, value in enumerate(registers)
                     }
-                    self.assertEqual(actual_registers, expected["registers"], "Final registers differ")
+                    expected_registers = expected["registers"]
+                    self.assertEqual(
+                        actual_registers,
+                        {
+                            f"R{index}": expected_registers.get(f"R{index}", 0)
+                            for index in range(16)
+                        },
+                        "Final registers differ",
+                    )
                     self.assertEqual(condition, expected["rc"], "Final Rc differs")
                     self.assertEqual(storage.hex(), expected["storage_hex"], "Final storage differs")
 
-    def test_rejects_registers_outside_supported_range(self):
+    def test_rejects_registers_outside_simpleasm_range(self):
         invalid_sources = {
-            "R8 instruction operand": (".CODE\nLI R8, d1\nEXIT\n", "x86 emitter"),
-            "R8 address base": (".CODE\nLA R0, [R8]\nEXIT\n", "x86 emitter"),
+            "R16 instruction operand": (".CODE\nLI R16, d1\nEXIT\n", "register"),
             "condition register as general register": (
                 ".CODE\nLI Rc, d1\nEXIT\n",
                 "must be a general register",

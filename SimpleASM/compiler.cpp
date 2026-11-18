@@ -398,9 +398,10 @@ class X86CodeGenerator {
             std::string label;
         };
 
-        // RSP stays reserved for the native process stack. Abstract these
-        // mappings so additional SimpleASM registers can later use spill slots.
-        static constexpr int DirectGuestRegisterCount = 8;
+        // RSP and scratch registers stay reserved; R0-R8 map to native registers.
+        static constexpr int DirectGuestRegisterCount = 9;
+        static constexpr int GuestRegisterCount = 16;
+        static constexpr int SpillAddressRegister = 11;
 
         const Program& program_;
         std::optional<int> stateSnapshotFd_;
@@ -415,7 +416,7 @@ class X86CodeGenerator {
         std::size_t stateSnapshotOffset_ = 0;
         static constexpr std::size_t CodeFileOffset = 0x1000;
         static constexpr uint64_t ImageBase = 0x400000;
-        static constexpr std::size_t StateSnapshotHeaderSize = 88;
+        static constexpr std::size_t StateSnapshotHeaderSize = 16 + GuestRegisterCount * 8 + 8;
 
         static void append8(std::vector<uint8_t>& output, uint8_t value) {
             output.push_back(value);
@@ -481,17 +482,17 @@ class X86CodeGenerator {
             }
         }
 
-        int guestRegister(const Instruction& instruction, std::size_t index) const {
+        int guestRegisterIndex(const Instruction& instruction, std::size_t index) const {
             const auto* reg = std::get_if<Register>(&operandAt(instruction, index));
             if (!reg || *reg == Register::Rc) {
                 throw std::invalid_argument(opcodeName(instruction.opcode) + " operand " +
                                             std::to_string(index + 1) + " must be a general register");
             }
             const int guestIndex = static_cast<int>(*reg);
-            if (guestIndex >= DirectGuestRegisterCount) {
-                throw std::invalid_argument("x86 emitter currently supports only R0 through R7");
+            if (guestIndex >= GuestRegisterCount) {
+                throw std::invalid_argument("Invalid SimpleASM general register");
             }
-            return nativeRegister(guestIndex);
+            return guestIndex;
         }
 
         static int64_t immediate(const Instruction& instruction, std::size_t index) {
@@ -504,13 +505,14 @@ class X86CodeGenerator {
         }
 
         static int nativeRegister(int guestIndex) {
-            // Avoid RSP and syscall-clobbered R11; the remaining guest registers
-            // survive Linux syscalls used by WRTE.
+            // Avoid RSP and syscall-clobbered R11; RAX, RCX, RDX, RSI, and RDI
+            // are reserved for emitted operations. The mapped registers survive
+            // Linux syscalls used by WRTE.
             static constexpr int mapping[DirectGuestRegisterCount] = {
-                8, 9, 10, 12, 13, 14, 15, 3
+                8, 9, 10, 12, 13, 14, 15, 3, 5
             };
             if (guestIndex < 0 || guestIndex >= DirectGuestRegisterCount) {
-                throw std::invalid_argument("x86 emitter currently supports only R0 through R7");
+                throw std::invalid_argument("SimpleASM register is not directly mapped to x86");
             }
             return mapping[guestIndex];
         }
@@ -526,8 +528,8 @@ class X86CodeGenerator {
             }
             if (value->baseRegister) {
                 const int reg = static_cast<int>(*value->baseRegister);
-                if (reg >= DirectGuestRegisterCount) {
-                    throw std::invalid_argument("x86 emitter currently supports only R0 through R7");
+                if (reg >= GuestRegisterCount) {
+                    throw std::invalid_argument("Invalid SimpleASM address base register");
                 }
             }
             return *value;
@@ -535,7 +537,7 @@ class X86CodeGenerator {
 
         static int registerCodeForGuest(Register reg) {
             if (reg == Register::Rc || static_cast<int>(reg) >= DirectGuestRegisterCount) {
-                throw std::invalid_argument("x86 emitter currently supports only R0 through R7");
+                throw std::invalid_argument("SimpleASM register is not directly mapped to x86");
             }
             return nativeRegister(static_cast<int>(reg));
         }
@@ -549,7 +551,46 @@ class X86CodeGenerator {
             }
         }
 
-        void emitAddressModRM(int regField, const Address& value, int64_t extraDisplacement = 0) {
+        std::size_t spillOffset(int guestIndex) const {
+            if (guestIndex < DirectGuestRegisterCount || guestIndex >= GuestRegisterCount) {
+                throw std::logic_error("Invalid spilled SimpleASM register");
+            }
+            return programDataSize_ + static_cast<std::size_t>(guestIndex - DirectGuestRegisterCount) * 8;
+        }
+
+        void emitSpillInstruction(uint8_t opcode, int regField, int guestIndex, bool wide = true) {
+            emitRex(code_, wide, regField, 0, 0);
+            append8(code_, opcode);
+            append8(code_, static_cast<uint8_t>(((regField & 7) << 3) | 5));
+            const std::size_t fieldOffset = code_.size();
+            append32(code_, 0);
+            ripFixups_.push_back({fieldOffset, static_cast<int64_t>(spillOffset(guestIndex)), code_.size()});
+        }
+
+        void emitLoadGuestRegister(int guestIndex, int nativeDestination) {
+            if (guestIndex < DirectGuestRegisterCount) {
+                const int source = nativeRegister(guestIndex);
+                if (source != nativeDestination) {
+                    emitRegReg(0x89, source, nativeDestination);
+                }
+            } else {
+                emitSpillInstruction(0x8B, nativeDestination, guestIndex);
+            }
+        }
+
+        void emitStoreGuestRegister(int guestIndex, int nativeSource) {
+            if (guestIndex < DirectGuestRegisterCount) {
+                const int destination = nativeRegister(guestIndex);
+                if (destination != nativeSource) {
+                    emitRegReg(0x89, nativeSource, destination);
+                }
+            } else {
+                emitSpillInstruction(0x89, nativeSource, guestIndex);
+            }
+        }
+
+        void emitAddressModRM(int regField, const Address& value, int64_t extraDisplacement = 0,
+                              int baseOverride = -1) {
             if ((extraDisplacement > 0 && value.displacement > INT64_MAX - extraDisplacement) ||
                 (extraDisplacement < 0 && value.displacement < INT64_MIN - extraDisplacement)) {
                 throw std::invalid_argument("Address displacement overflow");
@@ -567,7 +608,8 @@ class X86CodeGenerator {
                 return;
             }
 
-            const int base = registerCodeForGuest(*value.baseRegister);
+            const int base = baseOverride >= 0 ? baseOverride :
+                registerCodeForGuest(*value.baseRegister);
             signed32Bits(displacement, "Address displacement");
             append8(code_, static_cast<uint8_t>(0x80 | ((regField & 7) << 3) | (base & 7)));
             if ((base & 7) == 4) {
@@ -585,10 +627,16 @@ class X86CodeGenerator {
 
         void emitMemInstruction(const std::vector<uint8_t>& opcode, int regField, const Address& value,
                                 bool wide, bool forceRex = false) {
-            const int base = value.label ? 0 : registerCodeForGuest(*value.baseRegister);
+            int baseOverride = -1;
+            if (!value.label && static_cast<int>(*value.baseRegister) >= DirectGuestRegisterCount) {
+                emitLoadGuestRegister(static_cast<int>(*value.baseRegister), SpillAddressRegister);
+                baseOverride = SpillAddressRegister;
+            }
+            const int base = value.label ? 0 : (baseOverride >= 0 ? baseOverride :
+                registerCodeForGuest(*value.baseRegister));
             emitRex(code_, wide, regField, 0, base, forceRex);
             code_.insert(code_.end(), opcode.begin(), opcode.end());
-            emitAddressModRM(regField, value);
+            emitAddressModRM(regField, value, 0, baseOverride);
         }
 
         void emitNativeBaseMemInstruction(const std::vector<uint8_t>& opcode, int regField,
@@ -716,23 +764,30 @@ class X86CodeGenerator {
         }
 
         void emitStore(const Instruction& instruction) {
-            const int sourceRegister = guestRegister(instruction, 0);
+            const int sourceRegister = guestRegisterIndex(instruction, 0);
             const Address& destination = address(instruction, 1);
             const int64_t size = immediate(instruction, 2);
             if (size < 1 || size > 8) {
                 throw std::invalid_argument("ST size must be between 1 and 8 bytes");
             }
-            emitRegReg(0x89, sourceRegister, 0); // Preserve the guest value in RAX.
+            emitLoadGuestRegister(sourceRegister, 0); // Preserve the guest value in RAX.
+            int baseOverride = -1;
+            if (!destination.label &&
+                static_cast<int>(*destination.baseRegister) >= DirectGuestRegisterCount) {
+                emitLoadGuestRegister(static_cast<int>(*destination.baseRegister), SpillAddressRegister);
+                baseOverride = SpillAddressRegister;
+            }
             for (int64_t byte = 0; byte < size; ++byte) {
                 Address byteAddress = destination;
                 if (byte > 0 && byteAddress.displacement > INT64_MAX - byte) {
                     throw std::invalid_argument("Address displacement overflow");
                 }
                 byteAddress.displacement += byte;
-                const int base = byteAddress.label ? 0 : registerCodeForGuest(*byteAddress.baseRegister);
+                const int base = byteAddress.label ? 0 : (baseOverride >= 0 ? baseOverride :
+                    registerCodeForGuest(*byteAddress.baseRegister));
                 emitRex(code_, false, 0, 0, base, true);
                 append8(code_, 0x88);
-                emitAddressModRM(0, byteAddress);
+                emitAddressModRM(0, byteAddress, 0, baseOverride);
                 if (byte + 1 < size) {
                     emitGroupImmediateRegister(0xC1, 5, 0, 8);
                 }
@@ -864,12 +919,14 @@ class X86CodeGenerator {
             }
 
             emitRipRelativeAddress(7, stateSnapshotOffset_); // lea rdi, [snapshot header]
-            for (int guest = 0; guest < DirectGuestRegisterCount; ++guest) {
-                const int native = nativeRegister(guest);
-                emitRex(code_, true, native, 0, 7);
-                append8(code_, 0x89); // mov [rdi + disp32], guest register
-                append8(code_, static_cast<uint8_t>(0x80 | ((native & 7) << 3) | 7));
-                append32(code_, static_cast<uint32_t>(16 + guest * 8));
+            for (int guest = 0; guest < GuestRegisterCount; ++guest) {
+                if (guest < DirectGuestRegisterCount) {
+                    emitNativeBaseMemInstruction({0x89}, nativeRegister(guest), 7,
+                                                 16 + guest * 8, true);
+                } else {
+                    emitSpillInstruction(0x8B, 0, guest);
+                    emitNativeBaseMemInstruction({0x89}, 0, 7, 16 + guest * 8, true);
+                }
             }
 
             append8(code_, 0x8B); // mov eax, dword ptr [rip + condition]
@@ -879,9 +936,9 @@ class X86CodeGenerator {
             ripFixups_.push_back({
                 conditionFieldOffset, static_cast<int64_t>(conditionOffset_), code_.size()
             });
-            append8(code_, 0x89); // mov dword ptr [rdi + 80], eax
+            append8(code_, 0x89); // mov dword ptr [rdi + condition offset], eax
             append8(code_, 0x87);
-            append32(code_, 80);
+            append32(code_, 16 + GuestRegisterCount * 8);
 
             emitRipRelativeAddress(6, stateSnapshotOffset_); // lea rsi, [snapshot header]
             append8(code_, 0xBA);
@@ -909,36 +966,42 @@ class X86CodeGenerator {
             // ^ signedMultiply is never used, can we safely get rid of it?
             auto binary = [&](uint8_t opcode, bool signedMultiply = false) {
                 requireOperandCount(instruction, 2);
-                const int destination = guestRegister(instruction, 0);
-                const int source = guestRegister(instruction, 1);
-                emitRegReg(opcode, source, destination);
+                const int destination = guestRegisterIndex(instruction, 0);
+                const int source = guestRegisterIndex(instruction, 1);
+                emitLoadGuestRegister(destination, 0);
+                emitLoadGuestRegister(source, 1);
+                emitRegReg(opcode, 1, 0);
+                emitStoreGuestRegister(destination, 0);
                 (void)signedMultiply;
             };
 
             switch (instruction.opcode) {
                 case Opcode::LI: {
                     requireOperandCount(instruction, 2);
-                    emitRegImmediate(guestRegister(instruction, 0),
-                                     static_cast<uint64_t>(immediate(instruction, 1)));
+                    const int destination = guestRegisterIndex(instruction, 0);
+                    emitRegImmediate(0, static_cast<uint64_t>(immediate(instruction, 1)));
+                    emitStoreGuestRegister(destination, 0);
                     break;
                 }
                 case Opcode::LR: {
                     requireOperandCount(instruction, 2);
-                    const int destination = guestRegister(instruction, 0);
-                    const int source = guestRegister(instruction, 1);
-                    emitRegReg(0x89, source, destination);
+                    const int destination = guestRegisterIndex(instruction, 0);
+                    const int source = guestRegisterIndex(instruction, 1);
+                    emitLoadGuestRegister(source, 0);
+                    emitStoreGuestRegister(destination, 0);
                     break;
                 }
                 case Opcode::LA: {
                     requireOperandCount(instruction, 2);
-                    emitMemInstruction({0x8D}, guestRegister(instruction, 0),
-                                       address(instruction, 1), true);
+                    const int destination = guestRegisterIndex(instruction, 0);
+                    emitMemInstruction({0x8D}, 0, address(instruction, 1), true);
+                    emitStoreGuestRegister(destination, 0);
                     break;
                 }
                 case Opcode::LMU:
                 case Opcode::LMS: {
                     requireOperandCount(instruction, 3);
-                    const int destination = guestRegister(instruction, 0);
+                    const int destination = guestRegisterIndex(instruction, 0);
                     const Address& source = address(instruction, 1);
                     const int64_t size = immediate(instruction, 2);
                     if (size < 1 || size > 8) {
@@ -948,20 +1011,21 @@ class X86CodeGenerator {
                     // Resolve the address before clearing the destination; the
                     // destination may also be the address's base register.
                     emitMemInstruction({0x8D}, 6, source, true); // lea rsi, [source]
-                    emitRegReg(0x31, destination, destination);
+                    emitRegReg(0x31, 1, 1);
                     for (int64_t byte = 0; byte < size; ++byte) {
                         emitNativeBaseMemInstruction({0x0F, 0xB6}, 0, 6,
                                                      static_cast<int32_t>(byte), true);
                         if (byte != 0) {
                             emitGroupImmediateRegister(0xC1, 4, 0, static_cast<uint8_t>(byte * 8));
                         }
-                        emitRegReg(0x09, 0, destination);
+                        emitRegReg(0x09, 0, 1);
                     }
                     if (instruction.opcode == Opcode::LMS && size < 8) {
                         const uint8_t shift = static_cast<uint8_t>(64 - size * 8);
-                        emitGroupImmediateRegister(0xC1, 4, destination, shift);
-                        emitGroupImmediateRegister(0xC1, 7, destination, shift);
+                        emitGroupImmediateRegister(0xC1, 4, 1, shift);
+                        emitGroupImmediateRegister(0xC1, 7, 1, shift);
                     }
+                    emitStoreGuestRegister(destination, 1);
                     break;
                 }
                 case Opcode::ST:
@@ -976,20 +1040,24 @@ class X86CodeGenerator {
                 case Opcode::MUL:
                 case Opcode::MULS: {
                     requireOperandCount(instruction, 2);
-                    const int destination = guestRegister(instruction, 0);
-                    const int source = guestRegister(instruction, 1);
-                    emitRex(code_, true, destination, 0, source);
+                    const int destination = guestRegisterIndex(instruction, 0);
+                    const int source = guestRegisterIndex(instruction, 1);
+                    emitLoadGuestRegister(destination, 0);
+                    emitLoadGuestRegister(source, 1);
+                    emitRex(code_, true, 0, 0, 1);
                     append8(code_, 0x0F);
                     append8(code_, 0xAF);
-                    append8(code_, static_cast<uint8_t>(0xC0 | ((destination & 7) << 3) | (source & 7)));
+                    append8(code_, 0xC1); // imul rax, rcx
+                    emitStoreGuestRegister(destination, 0);
                     break;
                 }
                 case Opcode::DIV:
                 case Opcode::DIVS: {
                     requireOperandCount(instruction, 2);
-                    const int destination = guestRegister(instruction, 0);
-                    const int divisor = guestRegister(instruction, 1);
-                    emitRegReg(0x89, destination, 0); // mov rax, dividend
+                    const int destination = guestRegisterIndex(instruction, 0);
+                    const int divisor = guestRegisterIndex(instruction, 1);
+                    emitLoadGuestRegister(destination, 0);
+                    emitLoadGuestRegister(divisor, 1);
                     if (instruction.opcode == Opcode::DIVS) {
                         // x86 IDIV traps on INT64_MIN / -1, while SimpleASM wraps
                         // the mathematically overflowing quotient back to INT64_MIN.
@@ -999,12 +1067,12 @@ class X86CodeGenerator {
                         append8(code_, 0x85); // jne normal division
                         const std::size_t notMinimumField = code_.size();
                         append32(code_, 0);
-                        emitGroupImmediateRegister(0x83, 7, divisor, 0xFF); // cmp divisor, -1
+                        emitGroupImmediateRegister(0x83, 7, 1, 0xFF); // cmp divisor, -1
                         append8(code_, 0x0F);
                         append8(code_, 0x85); // jne normal division
                         const std::size_t notMinusOneField = code_.size();
                         append32(code_, 0);
-                        emitRegReg(0x89, 0, destination); // wrapped result is dividend
+                        // The overflow result is already in RAX.
                         append8(code_, 0xE9);
                         const std::size_t overflowDoneField = code_.size();
                         append32(code_, 0);
@@ -1019,10 +1087,9 @@ class X86CodeGenerator {
                             "Signed division overflow branch"));
                         append8(code_, 0x48);
                         append8(code_, 0x99); // cqo
-                        emitRex(code_, true, 7, 0, divisor);
+                        emitRex(code_, true, 7, 0, 1);
                         append8(code_, 0xF7);
-                        append8(code_, static_cast<uint8_t>(0xC0 | (7 << 3) | (divisor & 7)));
-                        emitRegReg(0x89, 0, destination); // mov quotient, rax
+                        append8(code_, 0xF9); // idiv rcx
                         const std::size_t divisionDone = code_.size();
                         patch32(code_, overflowDoneField, signed32Bits(
                             static_cast<int64_t>(divisionDone) -
@@ -1032,42 +1099,48 @@ class X86CodeGenerator {
                         append8(code_, 0x48);
                         append8(code_, 0x31);
                         append8(code_, 0xD2); // xor rdx, rdx
-                        emitRex(code_, true, 6, 0, divisor);
+                        emitRex(code_, true, 6, 0, 1);
                         append8(code_, 0xF7);
-                        append8(code_, static_cast<uint8_t>(0xC0 | (6 << 3) | (divisor & 7)));
-                        emitRegReg(0x89, 0, destination); // mov quotient, rax
+                        append8(code_, 0xF1); // div rcx
                     }
+                    emitStoreGuestRegister(destination, 0);
                     break;
                 }
                 case Opcode::ADDI:
                 case Opcode::SUBI: {
                     requireOperandCount(instruction, 2);
-                    const int destination = guestRegister(instruction, 0);
+                    const int destination = guestRegisterIndex(instruction, 0);
+                    emitLoadGuestRegister(destination, 1);
                     emitRegImmediate(0, static_cast<uint64_t>(immediate(instruction, 1)));
-                    emitRegReg(instruction.opcode == Opcode::ADDI ? 0x01 : 0x29, 0, destination);
+                    emitRegReg(instruction.opcode == Opcode::ADDI ? 0x01 : 0x29, 0, 1);
+                    emitStoreGuestRegister(destination, 1);
                     break;
                 }
                 case Opcode::LSH:
                 case Opcode::RSH:
                 case Opcode::RSHS: {
                     requireOperandCount(instruction, 2);
-                    const int destination = guestRegister(instruction, 0);
+                    const int destination = guestRegisterIndex(instruction, 0);
                     const int64_t shift = immediate(instruction, 1);
                     if (shift < 0 || shift > 63) {
                         throw std::invalid_argument("Shift must be between 0 and 63");
                     }
                     const int group = instruction.opcode == Opcode::LSH ? 4 :
                                       instruction.opcode == Opcode::RSH ? 5 : 7;
-                    emitGroupImmediateRegister(0xC1, group, destination,
+                    emitLoadGuestRegister(destination, 0);
+                    emitGroupImmediateRegister(0xC1, group, 0,
                                                static_cast<uint8_t>(shift));
+                    emitStoreGuestRegister(destination, 0);
                     break;
                 }
                 case Opcode::CMP:
                 case Opcode::CMPS: {
                     requireOperandCount(instruction, 2);
-                    const int lhs = guestRegister(instruction, 0);
-                    const int rhs = guestRegister(instruction, 1);
-                    emitRegReg(0x39, rhs, lhs); // cmp lhs, rhs
+                    const int lhs = guestRegisterIndex(instruction, 0);
+                    const int rhs = guestRegisterIndex(instruction, 1);
+                    emitLoadGuestRegister(lhs, 0);
+                    emitLoadGuestRegister(rhs, 1);
+                    emitRegReg(0x39, 1, 0); // cmp lhs, rhs
                     append8(code_, 0x0F);
                     append8(code_, 0x84); // je equal
                     const std::size_t equalField = code_.size();
@@ -1144,16 +1217,16 @@ class X86CodeGenerator {
             if (stateSnapshotFd_ && programDataSize_ > UINT32_MAX) {
                 throw std::invalid_argument("x86 state snapshots support at most 4 GiB of program storage");
             }
-            // R8-R15 backing slots, in register order, keep later spill support
-            // from changing the layout of the program's data entries.
-            data_.resize(data_.size() + (16 - DirectGuestRegisterCount) * 8, 0);
+            // Keep persistent backing storage for the guest registers not mapped
+            // to native registers, after the program's declared data entries.
+            data_.resize(data_.size() + (GuestRegisterCount - DirectGuestRegisterCount) * 8, 0);
             conditionOffset_ = data_.size();
             data_.resize(data_.size() + 8, 0);
             if (stateSnapshotFd_) {
                 stateSnapshotOffset_ = data_.size();
-                data_.insert(data_.end(), {'S', 'A', 'S', 'M', 'S', 'T', '1', 0});
+                data_.insert(data_.end(), {'S', 'A', 'S', 'M', 'S', 'T', '3', 0});
                 append64(data_, static_cast<uint64_t>(programDataSize_));
-                data_.resize(data_.size() + 8 * 8 + 8, 0);
+                data_.resize(data_.size() + GuestRegisterCount * 8 + 8, 0);
             }
         }
 
