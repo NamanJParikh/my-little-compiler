@@ -1,0 +1,13 @@
+.DATA
+FIRST d0
+SECOND d0
+.CODE
+      LA R9, FIRST
+      LI R10, d17
+      ST R10, [R9], d8
+      LMU R11, [R9], d8
+      LI R12, d29
+      ST R12, [R9 + d8], d8
+      LMU R13, [R9 + d8], d8
+      LI R0, d42
+      EXIT

@@ -1,0 +1,12 @@
+.DATA
+CELL d0
+.CODE
+      LI R9, d10
+      ADDI R9, d5
+      ADD R9, R9
+      LR R10, R9
+      LA R11, CELL
+      ST R9, [R11], d8
+      LMU R11, [R11], d8
+      LI R0, d42
+      EXIT

@@ -1,0 +1,12 @@
+.CODE
+      LI R9, d-9223372036854775808
+      LI R10, d-1
+      DIVS R9, R10
+      LI R11, d-9223372036854775808
+      LI R12, d2
+      DIV R11, R12
+      LI R13, d-1
+      LI R14, d-1
+      DIV R13, R14
+      LI R0, d42
+      EXIT

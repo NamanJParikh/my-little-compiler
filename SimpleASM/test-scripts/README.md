@@ -63,11 +63,16 @@ currently implemented by the x86 backend, plus data-only and empty programs.
 
 The `python_*.sasm` fixtures mirror all Python-emitter source programs without
 overwriting the existing x86 fixtures; runtime cases exercise spilled-register
-arithmetic, control flow, memory, and text behavior. Out-of-bounds memory/text
-and division-by-zero cases are compile-tested only because those were for python
-related constraints. The R8 fixture tests R8 as an instruction operand and address 
-base; separate negative tests check that invalid register identifiers and Rc as 
-a general register are rejected.
+arithmetic, control flow, memory, and text behavior. Positive-offset
+out-of-bounds load/store fixtures check the final declared-storage hex.
+Negative-address memory/text and division-by-zero cases are compile-tested
+only because native x86 faults are not a stable behavioral expectation. The
+spilled-address-base and aliasing fixtures exercise R9-R15 backing slots;
+division-boundary and memory-width fixtures cover signed overflow behavior,
+signed extension, and 1-, 2-, 4-, and 8-byte loads and stores. The R8 fixture
+tests R8 as an instruction operand and address base; separate negative tests
+check that invalid register identifiers and Rc as a general register are
+rejected.
 
 For x86-64 ELF tests on macOS, run the generated executable in an `amd64` Linux
 container. `--x86-state-fd 3` enables a final-state snapshot on inherited file
