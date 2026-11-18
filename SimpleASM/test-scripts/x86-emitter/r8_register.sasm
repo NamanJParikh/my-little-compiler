@@ -1,0 +1,9 @@
+.DATA
+VALUE d0
+.CODE
+      LA R8, VALUE
+      LI R1, d42
+      ST R1, [R8], d8
+      LMU R0, [R8], d8
+      LI R8, d40
+      EXIT
