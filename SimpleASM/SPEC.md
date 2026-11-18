@@ -50,8 +50,8 @@ Bit strings should begin with the letter ```b```.
 Hex strings should begin with the letter ```x```.
 
 Text strings should begin with the letter ```t```, followed by text enclosed in
-single apostrophes. Text is encoded in ASCII, and whitespace inside the
-apostrophes is preserved (for example, ```t'Hello world'```).
+single apostrophes. Whitespace inside the apostrophes is preserved (for example, 
+```t'Hello world'```).
 
 ## Immediate Values
 
@@ -159,7 +159,7 @@ Parsing produces a `Program` containing:
 The Python target emits runnable Python code for each SimpleASM instruction.
 Its emulator uses 64-bit registers, a 2-bit condition register, and
 little-endian byte-addressed memory. Numeric data entries occupy eight bytes;
-text entries are ASCII bytes terminated by a zero byte. Loads, stores, and
+text entries are terminated by a zero byte. Loads, stores, and
 text output use those memory addresses. Signed arithmetic and comparisons use
 two's-complement register values, and arithmetic results wrap to 64 bits. After
 execution, the generated script prints the return code in `R0`, the values of
@@ -173,8 +173,8 @@ a `.py` extension. The output path can be overridden with `-o` or `--output`.
 
 The x86 target emits a native Linux ELF64 executable using direct x86-64 machine
 code. It uses separate read/execute code and read/write data load segments.
-Numeric data entries occupy eight little-endian bytes; text entries are ASCII
-bytes terminated by zero. Code labels are resolved to instruction addresses,
+Numeric data entries occupy eight little-endian bytes; text entries are
+terminated by a zero byte. Code labels are resolved to instruction addresses,
 and data-label references use RIP-relative addressing with displacements
 measured from the end of each x86 instruction.
 
